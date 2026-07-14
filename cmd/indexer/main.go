@@ -22,7 +22,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	fmt.Printf("Stellar Explorer Indexer\n")
+	fmt.Printf("StellarView Indexer\n")
 	fmt.Printf("  Network:    %s\n", cfg.Network)
 	fmt.Printf("  RPC:        %s\n", cfg.RPCEndpoint)
 	fmt.Printf("  Database:   %s\n", cfg.DatabaseURL)

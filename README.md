@@ -1,4 +1,4 @@
-# Stellar Explorer Indexer
+# StellarView Indexer
 
 Go service that ingests Stellar network data (ledgers, transactions, operations) into PostgreSQL, with real-time event publishing via Redis. Supports two data sources: Stellar JSON-RPC (for any network) and the AWS public S3 data lake (for pubnet historical backfill).
 
