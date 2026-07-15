@@ -4,9 +4,46 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 
 	_ "github.com/lib/pq"
 )
+
+// checkTokenEventConstraints validates that a TokenEvent's string fields fit their
+// database column sizes. Returns a descriptive error naming the offending field.
+func checkTokenEventConstraints(e TokenEvent) error {
+	str := func(s *string) string {
+		if s == nil {
+			return "<nil>"
+		}
+		return *s
+	}
+	if len(e.EventTypeName) > 16 {
+		return fmt.Errorf("event_type_name too long (%d chars): %q", len(e.EventTypeName), e.EventTypeName)
+	}
+	if e.FromAddress != nil && len(*e.FromAddress) > 69 {
+		return fmt.Errorf("from_address too long (%d chars): %q", len(*e.FromAddress), str(e.FromAddress))
+	}
+	if e.FromMuxed != nil && len(*e.FromMuxed) > 69 {
+		return fmt.Errorf("from_muxed too long (%d chars): %q", len(*e.FromMuxed), str(e.FromMuxed))
+	}
+	if e.ToAddress != nil && len(*e.ToAddress) > 69 {
+		return fmt.Errorf("to_address too long (%d chars): %q", len(*e.ToAddress), str(e.ToAddress))
+	}
+	if e.ToMuxed != nil && len(*e.ToMuxed) > 69 {
+		return fmt.Errorf("to_muxed too long (%d chars): %q", len(*e.ToMuxed), str(e.ToMuxed))
+	}
+	if e.AssetCode != nil && len(*e.AssetCode) > 12 {
+		return fmt.Errorf("asset_code too long (%d chars): %q", len(*e.AssetCode), str(e.AssetCode))
+	}
+	if e.AssetIssuer != nil && len(*e.AssetIssuer) > 56 {
+		return fmt.Errorf("asset_issuer too long (%d chars): %q", len(*e.AssetIssuer), str(e.AssetIssuer))
+	}
+	if e.AssetContractID != nil && len(*e.AssetContractID) > 56 {
+		return fmt.Errorf("asset_contract_id too long (%d chars): %q", len(*e.AssetContractID), str(e.AssetContractID))
+	}
+	return nil
+}
 
 type PostgresStore struct {
 	db *sql.DB
@@ -140,6 +177,13 @@ func (s *PostgresStore) InsertTokenEventBatch(ctx context.Context, events []Toke
 	defer stmt.Close()
 
 	for _, e := range events {
+		if err := checkTokenEventConstraints(e); err != nil {
+			// This should not happen in practice — unsupported address types
+			// (e.g. claimable balances) are filtered at the transform layer.
+			log.Printf("token_events: skip event (unexpected constraint violation) ledger=%d tx=%s: %v",
+				e.LedgerSequence, e.TransactionHash, err)
+			continue
+		}
 		_, err := stmt.ExecContext(ctx,
 			e.EventType, e.EventTypeName,
 			e.FromAddress, e.FromMuxed, e.ToAddress, e.ToMuxed, e.ToMuxedID,

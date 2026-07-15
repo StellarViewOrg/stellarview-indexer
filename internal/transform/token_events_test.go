@@ -166,3 +166,28 @@ func TestTokenEventsFromLedgerMeta_EmptyMeta(t *testing.T) {
 		t.Errorf("expected 0 events for empty meta, got %d", len(events))
 	}
 }
+
+func TestToBaseAccount(t *testing.T) {
+	// Regular G... address — should pass through unchanged.
+	g := "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN"
+	base, mux := toBaseAccount(g)
+	if base != g {
+		t.Errorf("G address: base = %q, want %q", base, g)
+	}
+	if mux != nil {
+		t.Errorf("G address: expected nil muxed, got %q", *mux)
+	}
+
+	// Muxed M... address — should return a 56-char G... base and preserve the full M... string.
+	// MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK is a valid muxed address
+	// from the strkey test suite.
+	m := "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK"
+	base2, mux2 := toBaseAccount(m)
+	if len(base2) != 56 || base2[0] != 'G' {
+		t.Errorf("M address: expected 56-char G... base, got %q", base2)
+	}
+	if mux2 == nil || *mux2 != m {
+		t.Errorf("M address: expected muxed=%q, got %v", m, mux2)
+	}
+	t.Logf("M... → base=%q muxed=%q", base2, *mux2)
+}

@@ -3,14 +3,20 @@ package transform
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	assetProto "github.com/stellar/go-stellar-sdk/asset"
 	"github.com/stellar/go-stellar-sdk/processors/token_transfer"
+	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/store"
 )
+
+// errSkipEvent is returned by tokenEventFromProto for events that should be
+// silently skipped (not errors, just expected non-indexable events).
+var errSkipEvent = fmt.Errorf("skip")
 
 const (
 	tokenEventTypeTransfer int16 = 0
@@ -23,6 +29,36 @@ const (
 	assetTypeCredit       int16 = 1
 	assetTypeSorobanToken int16 = 2
 )
+
+// isClaimableBalanceAddr reports whether addr is a claimable balance strkey
+// (B... prefix, 58 chars per SEP-23). These appear as from/to in CAP-67 events
+// for createClaimableBalance / claimClaimableBalance operations.
+// We skip them in token_events — the canonical source for this data is the
+// operations table (see docs/issues/claimable-balance-operations.md).
+func isClaimableBalanceAddr(addr string) bool {
+	return strings.HasPrefix(addr, "B")
+}
+
+// toBaseAccount splits an address into its base G... account and, if it was
+// a muxed M... address, the full muxed string. For regular G... or C... addresses,
+// base == addr and muxed is nil.
+func toBaseAccount(addr string) (base string, muxed *string) {
+	if !strings.HasPrefix(addr, "M") {
+		return addr, nil
+	}
+	// Muxed account: decode to get the underlying Ed25519 key bytes.
+	// The muxed strkey payload is 8 bytes (uint64 ID) + 32 bytes (Ed25519 key).
+	raw, err := strkey.Decode(strkey.VersionByteMuxedAccount, addr)
+	if err != nil || len(raw) < 40 {
+		// Can't decode — store as-is in muxed field, use addr as fallback
+		return addr, &addr
+	}
+	baseAddr, err := strkey.Encode(strkey.VersionByteAccountID, raw[8:])
+	if err != nil {
+		return addr, &addr
+	}
+	return baseAddr, &addr
+}
 
 // TokenEventsFromLedgerMeta extracts CAP-67 unified token transfer events from a
 // base64-encoded LedgerCloseMeta XDR string (the metadataXdr field from getLedgers RPC).
@@ -45,6 +81,9 @@ func TokenEventsFromLedgerMeta(metaXDR string, networkPassphrase string) ([]stor
 	result := make([]store.TokenEvent, 0, len(events))
 	for _, event := range events {
 		te, err := tokenEventFromProto(event)
+		if err == errSkipEvent {
+			continue
+		}
 		if err != nil {
 			log.Printf("token_events: skip event: %v", err)
 			continue
@@ -63,44 +102,60 @@ func tokenEventFromProto(event *token_transfer.TokenTransferEvent) (*store.Token
 	eventTypeName := event.GetEventType()
 	var eventType int16
 	var fromAddr, toAddr *string
+	var fromMuxed, toMuxed *string
 
 	switch e := event.GetEvent().(type) {
 	case *token_transfer.TokenTransferEvent_Transfer:
 		eventType = tokenEventTypeTransfer
-		from := e.Transfer.GetFrom()
-		to := e.Transfer.GetTo()
-		if from != "" {
-			fromAddr = &from
+		if from := e.Transfer.GetFrom(); from != "" {
+			base, mux := toBaseAccount(from)
+			fromAddr = &base
+			fromMuxed = mux
 		}
-		if to != "" {
-			toAddr = &to
+		if to := e.Transfer.GetTo(); to != "" {
+			base, mux := toBaseAccount(to)
+			toAddr = &base
+			toMuxed = mux
 		}
 	case *token_transfer.TokenTransferEvent_Mint:
 		eventType = tokenEventTypeMint
-		to := e.Mint.GetTo()
-		if to != "" {
-			toAddr = &to
+		if to := e.Mint.GetTo(); to != "" {
+			base, mux := toBaseAccount(to)
+			toAddr = &base
+			toMuxed = mux
 		}
 	case *token_transfer.TokenTransferEvent_Burn:
 		eventType = tokenEventTypeBurn
-		from := e.Burn.GetFrom()
-		if from != "" {
-			fromAddr = &from
+		if from := e.Burn.GetFrom(); from != "" {
+			base, mux := toBaseAccount(from)
+			fromAddr = &base
+			fromMuxed = mux
 		}
 	case *token_transfer.TokenTransferEvent_Clawback:
 		eventType = tokenEventTypeClawback
-		from := e.Clawback.GetFrom()
-		if from != "" {
-			fromAddr = &from
+		if from := e.Clawback.GetFrom(); from != "" {
+			base, mux := toBaseAccount(from)
+			fromAddr = &base
+			fromMuxed = mux
 		}
 	case *token_transfer.TokenTransferEvent_Fee:
 		eventType = tokenEventTypeFee
-		from := e.Fee.GetFrom()
-		if from != "" {
-			fromAddr = &from
+		if from := e.Fee.GetFrom(); from != "" {
+			base, mux := toBaseAccount(from)
+			fromAddr = &base
+			fromMuxed = mux
 		}
 	default:
 		return nil, fmt.Errorf("unknown event type: %T", event.GetEvent())
+	}
+
+	// Claimable balance IDs (B... strkeys, 58 chars) cannot be stored in
+	// from_address/to_address VARCHAR(56). These events arise from
+	// createClaimableBalance / claimClaimableBalance operations and are
+	// tracked via the operations table instead.
+	if (fromAddr != nil && isClaimableBalanceAddr(*fromAddr)) ||
+		(toAddr != nil && isClaimableBalanceAddr(*toAddr)) {
+		return nil, errSkipEvent
 	}
 
 	// Muxed destination info
@@ -132,7 +187,9 @@ func tokenEventFromProto(event *token_transfer.TokenTransferEvent) (*store.Token
 		EventType:       eventType,
 		EventTypeName:   eventTypeName,
 		FromAddress:     fromAddr,
+		FromMuxed:       fromMuxed,
 		ToAddress:       toAddr,
+		ToMuxed:         toMuxed,
 		ToMuxedID:       toMuxedID,
 		AssetType:       assetType,
 		AssetCode:       assetCode,
