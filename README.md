@@ -4,7 +4,7 @@ Go service that ingests Stellar network data (ledgers, transactions, operations)
 
 ## Prerequisites
 
-- Go 1.24+ (managed via asdf, see `.tool-versions`)
+- Go 1.25+ (managed via asdf, see `.tool-versions`)
 - Docker Compose services running:
 
 ```bash
@@ -17,7 +17,7 @@ This starts PostgreSQL+TimescaleDB (port 54320), Redis (port 63790), and Typesen
 - Database migrations applied:
 
 ```bash
-# from services/indexer/
+# from the repository root
 make build
 ./bin/indexer migrate
 ```
@@ -99,7 +99,7 @@ WORKER_COUNT=16 ./bin/indexer s3backfill --start 3 --end 5000000
 
 ## Migrations
 
-Migrations live in `services/indexer/migrations/` and are embedded in the binary at build time.
+Migrations live in `migrations/` and are embedded in the binary at build time.
 
 ### Running migrations
 
@@ -123,7 +123,7 @@ Then run:
 migrate create -ext sql -dir migrations -seq your_description
 ```
 
-This generates two files in `services/indexer/migrations/`:
+This generates two files in `migrations/`:
 
 ```
 000014_your_description.up.sql    # forward change (CREATE TABLE, ALTER TABLE, etc.)
