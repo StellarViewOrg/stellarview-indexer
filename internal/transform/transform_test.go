@@ -11,6 +11,9 @@ import (
 )
 
 func getRPCClient(t *testing.T) *source.RPCClient {
+	if testing.Short() {
+		t.Skip("skipping test that requires live network access")
+	}
 	endpoint := os.Getenv("TEST_RPC_ENDPOINT")
 	if endpoint == "" {
 		endpoint = "https://soroban-testnet.stellar.org"

@@ -13,6 +13,9 @@ import (
 )
 
 func getTestDeps(t *testing.T) (*source.RPCClient, *store.PostgresStore) {
+	if testing.Short() {
+		t.Skip("skipping test that requires live network access")
+	}
 	dbURL := os.Getenv("TEST_DATABASE_URL")
 	if dbURL == "" {
 		dbURL = "postgresql://explorer:explorer_dev@localhost:54320/stellar_explorer?sslmode=disable"
