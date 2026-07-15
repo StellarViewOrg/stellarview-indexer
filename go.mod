@@ -1,6 +1,6 @@
 module github.com/miguelnietoa/stellar-explorer/indexer
 
-go 1.24.4
+go 1.25
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.36.5
@@ -9,7 +9,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/lib/pq v1.11.2
 	github.com/redis/go-redis/v9 v9.18.0
-	github.com/stellar/go-stellar-sdk v0.1.0
+	github.com/stellar/go-stellar-sdk v0.6.0
 	google.golang.org/protobuf v1.36.7
 )
 
@@ -79,7 +79,7 @@ require (
 	github.com/segmentio/go-loggly v0.5.1-0.20171222203950-eb91657e62b2 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
-	github.com/stellar/go-xdr v0.0.0-20231122183749-b53fb00bcac2 // indirect
+	github.com/stellar/go-xdr v0.0.0-20260529210834-0bf8f4956364 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/zeebo/errs v1.4.0 // indirect
