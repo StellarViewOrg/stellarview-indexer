@@ -296,6 +296,31 @@ func extractOperationDetails(op xdr.Operation) map[string]interface{} {
 		details["buying"] = assetString(o.Buying)
 		details["amount"] = fmt.Sprintf("%d", o.Amount)
 		details["price"] = fmt.Sprintf("%d/%d", o.Price.N, o.Price.D)
+	case xdr.OperationTypeCreateClaimableBalance:
+		o := op.Body.MustCreateClaimableBalanceOp()
+		details["asset"] = assetString(o.Asset)
+		details["amount"] = fmt.Sprintf("%d", o.Amount)
+		claimants := make([]map[string]interface{}, 0, len(o.Claimants))
+		for _, c := range o.Claimants {
+			v0 := c.MustV0()
+			claimants = append(claimants, map[string]interface{}{
+				"destination": v0.Destination.Address(),
+				"predicate":   claimPredicateMap(v0.Predicate),
+			})
+		}
+		details["claimants"] = claimants
+	case xdr.OperationTypeClaimClaimableBalance:
+		o := op.Body.MustClaimClaimableBalanceOp()
+		details["balance_id"] = claimableBalanceIdString(o.BalanceId)
+	case xdr.OperationTypeBeginSponsoringFutureReserves:
+		o := op.Body.MustBeginSponsoringFutureReservesOp()
+		details["sponsored_id"] = o.SponsoredId.Address()
+	case xdr.OperationTypeEndSponsoringFutureReserves:
+		// end_sponsoring_future_reserves has an empty operation body; the
+		// "type" entry set above is its complete detail.
+	case xdr.OperationTypeRevokeSponsorship:
+		o := op.Body.MustRevokeSponsorshipOp()
+		revokeSponsorshipDetails(details, o)
 	}
 
 	return details
@@ -367,6 +392,13 @@ func enrichOperation(storeOp *store.Operation, op xdr.Operation, details map[str
 		code, issuer := assetParts(o.Selling)
 		storeOp.AssetCode = code
 		storeOp.AssetIssuer = issuer
+	case xdr.OperationTypeCreateClaimableBalance:
+		o := op.Body.MustCreateClaimableBalanceOp()
+		amount := fmt.Sprintf("%d", o.Amount)
+		storeOp.Amount = &amount
+		code, issuer := assetParts(o.Asset)
+		storeOp.AssetCode = code
+		storeOp.AssetIssuer = issuer
 	}
 }
 
@@ -420,4 +452,100 @@ func assetParts(asset xdr.Asset) (*string, *string) {
 	default:
 		return nil, nil
 	}
+}
+
+// claimPredicateMap converts a ClaimPredicate into a JSON-friendly map using
+// the same field names Horizon uses for claimable balance predicates
+// (unconditional, and, or, not, abs_before, rel_before).
+func claimPredicateMap(p xdr.ClaimPredicate) map[string]interface{} {
+	switch p.Type {
+	case xdr.ClaimPredicateTypeClaimPredicateUnconditional:
+		return map[string]interface{}{"unconditional": true}
+	case xdr.ClaimPredicateTypeClaimPredicateAnd:
+		preds := p.MustAndPredicates()
+		sub := make([]map[string]interface{}, 0, len(preds))
+		for _, sp := range preds {
+			sub = append(sub, claimPredicateMap(sp))
+		}
+		return map[string]interface{}{"and": sub}
+	case xdr.ClaimPredicateTypeClaimPredicateOr:
+		preds := p.MustOrPredicates()
+		sub := make([]map[string]interface{}, 0, len(preds))
+		for _, sp := range preds {
+			sub = append(sub, claimPredicateMap(sp))
+		}
+		return map[string]interface{}{"or": sub}
+	case xdr.ClaimPredicateTypeClaimPredicateNot:
+		// The not-arm is optional in XDR and may be null.
+		if inner := p.MustNotPredicate(); inner != nil {
+			return map[string]interface{}{"not": claimPredicateMap(*inner)}
+		}
+		return map[string]interface{}{"not": nil}
+	case xdr.ClaimPredicateTypeClaimPredicateBeforeAbsoluteTime:
+		return map[string]interface{}{"abs_before": fmt.Sprintf("%d", p.MustAbsBefore())}
+	case xdr.ClaimPredicateTypeClaimPredicateBeforeRelativeTime:
+		return map[string]interface{}{"rel_before": fmt.Sprintf("%d", p.MustRelBefore())}
+	default:
+		return map[string]interface{}{"unknown": p.Type.String()}
+	}
+}
+
+// claimableBalanceIdString renders a claimable balance ID as the
+// type-prefixed hex string used by Horizon and Stellar RPC
+// (e.g. "00000000d1d73327fc560cbb3f5a9de85e5fdfebb5c4525c47ecc515989c8a7746a94b8a").
+func claimableBalanceIdString(id xdr.ClaimableBalanceId) string {
+	s, err := xdr.MarshalHex(id)
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
+// revokeSponsorshipDetails fills details for a revoke_sponsorship operation:
+// the kind of sponsorship being revoked plus the ledger key or signer it
+// targets, using Horizon's field names.
+func revokeSponsorshipDetails(details map[string]interface{}, o xdr.RevokeSponsorshipOp) {
+	switch o.Type {
+	case xdr.RevokeSponsorshipTypeRevokeSponsorshipLedgerEntry:
+		key := o.MustLedgerKey()
+		switch key.Type {
+		case xdr.LedgerEntryTypeAccount:
+			details["sponsorship_type"] = "account"
+			details["account_id"] = key.Account.AccountId.Address()
+		case xdr.LedgerEntryTypeTrustline:
+			details["sponsorship_type"] = "trustline"
+			details["trustline_account_id"] = key.TrustLine.AccountId.Address()
+			details["trustline_asset"] = trustLineAssetString(key.TrustLine.Asset)
+		case xdr.LedgerEntryTypeOffer:
+			details["sponsorship_type"] = "offer"
+			details["seller_id"] = key.Offer.SellerId.Address()
+			details["offer_id"] = fmt.Sprintf("%d", key.Offer.OfferId)
+		case xdr.LedgerEntryTypeData:
+			details["sponsorship_type"] = "data"
+			details["data_account_id"] = key.Data.AccountId.Address()
+			details["data_name"] = string(key.Data.DataName)
+		case xdr.LedgerEntryTypeClaimableBalance:
+			details["sponsorship_type"] = "claimable_balance"
+			details["claimable_balance_id"] = claimableBalanceIdString(key.ClaimableBalance.BalanceId)
+		case xdr.LedgerEntryTypeLiquidityPool:
+			details["sponsorship_type"] = "liquidity_pool"
+			poolId := key.LiquidityPool.LiquidityPoolId
+			details["liquidity_pool_id"] = hex.EncodeToString(poolId[:])
+		}
+	case xdr.RevokeSponsorshipTypeRevokeSponsorshipSigner:
+		s := o.MustSigner()
+		details["sponsorship_type"] = "signer"
+		details["signer_account_id"] = s.AccountId.Address()
+		details["signer_key"] = s.SignerKey.Address()
+	}
+}
+
+// trustLineAssetString renders a trustline asset, which unlike a regular
+// asset may also be a liquidity pool share.
+func trustLineAssetString(a xdr.TrustLineAsset) string {
+	if a.Type == xdr.AssetTypeAssetTypePoolShare {
+		id := a.MustLiquidityPoolId()
+		return "liquidity_pool:" + hex.EncodeToString(id[:])
+	}
+	return assetString(a.ToAsset())
 }
