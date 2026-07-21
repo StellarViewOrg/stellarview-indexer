@@ -19,6 +19,7 @@ type Config struct {
 	StartLedger  uint32
 	BatchSize    int
 	WorkerCount  int
+	MetricsAddr  string // listen address for /metrics and /healthz; disabled when empty
 }
 
 func Load() (*Config, error) {
@@ -32,6 +33,7 @@ func Load() (*Config, error) {
 		Network:      getEnv("NETWORK", "public"),
 		BatchSize:    getEnvInt("BATCH_SIZE", 100),
 		WorkerCount:  getEnvInt("WORKER_COUNT", 8),
+		MetricsAddr:  getEnv("METRICS_ADDR", ""),
 	}
 
 	return cfg, nil

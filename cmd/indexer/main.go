@@ -8,8 +8,10 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/config"
+	"github.com/miguelnietoa/stellar-explorer/indexer/internal/httpserver"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/pipeline"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/publisher"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/source"
@@ -85,6 +87,23 @@ func runLive(cfg *config.Config) {
 
 	db, rpc := initDeps(cfg, passphrase)
 	defer db.Close()
+
+	if cfg.MetricsAddr != "" {
+		srv := httpserver.New(cfg.MetricsAddr, db.DB())
+		go func() {
+			log.Printf("metrics server listening on %s (/metrics, /healthz)", cfg.MetricsAddr)
+			if err := srv.Start(); err != nil {
+				log.Printf("metrics server error: %v", err)
+			}
+		}()
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer shutdownCancel()
+			if err := srv.Shutdown(shutdownCtx); err != nil {
+				log.Printf("metrics server shutdown error: %v", err)
+			}
+		}()
+	}
 
 	p := pipeline.NewLivePipeline(rpc, db, passphrase, cfg.BatchSize)
 

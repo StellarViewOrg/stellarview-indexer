@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/miguelnietoa/stellar-explorer/indexer/internal/metrics"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/source"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/store"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/transform"
@@ -80,11 +81,13 @@ func (p *LivePipeline) Run(ctx context.Context) error {
 func (p *LivePipeline) ingestNewLedgers(ctx context.Context) (int, error) {
 	latest, err := p.rpc.GetLatestLedger(ctx)
 	if err != nil {
+		metrics.RPCErrors.Inc()
 		return 0, fmt.Errorf("getLatestLedger: %w", err)
 	}
 
 	lastIngested, err := p.store.GetLastIngestedLedger(ctx)
 	if err != nil {
+		metrics.DBErrors.Inc()
 		return 0, fmt.Errorf("getLastIngestedLedger: %w", err)
 	}
 
@@ -93,6 +96,8 @@ func (p *LivePipeline) ingestNewLedgers(ctx context.Context) (int, error) {
 		lastIngested = latest.Sequence - 1
 		log.Printf("live pipeline: first run, starting from ledger %d", lastIngested+1)
 	}
+
+	metrics.IngestionLagLedgers.Set(float64(latest.Sequence - lastIngested))
 
 	if latest.Sequence <= lastIngested {
 		return 0, nil
@@ -131,6 +136,7 @@ func (p *LivePipeline) processLedgerBatch(ctx context.Context, startLedger uint3
 		Pagination:  &source.Pagination{Limit: limit},
 	})
 	if err != nil {
+		metrics.RPCErrors.Inc()
 		return 0, fmt.Errorf("getLedgers: %w", err)
 	}
 
@@ -145,6 +151,7 @@ func (p *LivePipeline) processLedgerBatch(ctx context.Context, startLedger uint3
 		Pagination:  &source.Pagination{Limit: txPageLimit},
 	})
 	if err != nil {
+		metrics.RPCErrors.Inc()
 		return 0, fmt.Errorf("getTransactions: %w", err)
 	}
 
@@ -172,6 +179,7 @@ func (p *LivePipeline) processLedgerBatch(ctx context.Context, startLedger uint3
 			Pagination: &source.Pagination{Cursor: txResult.Cursor, Limit: txPageLimit},
 		})
 		if err != nil {
+			metrics.RPCErrors.Inc()
 			return 0, fmt.Errorf("getTransactions (pagination): %w", err)
 		}
 		allTxEntries = append(allTxEntries, txResult.Transactions...)
@@ -266,12 +274,15 @@ func ProcessOneLedger(ctx context.Context, rpc *source.RPCClient, db *store.Post
 
 	// Write to database
 	if err := db.InsertLedger(ctx, ledger); err != nil {
+		metrics.DBErrors.Inc()
 		return fmt.Errorf("insert ledger: %w", err)
 	}
 	if err := db.InsertTransactionBatch(ctx, storeTxs); err != nil {
+		metrics.DBErrors.Inc()
 		return fmt.Errorf("insert transactions: %w", err)
 	}
 	if err := db.InsertOperationBatch(ctx, storeOps); err != nil {
+		metrics.DBErrors.Inc()
 		return fmt.Errorf("insert operations: %w", err)
 	}
 	// Detect newly created contracts and process their specs asynchronously
@@ -290,16 +301,23 @@ func ProcessOneLedger(ctx context.Context, rpc *source.RPCClient, db *store.Post
 	}
 
 	if err := db.InsertTokenEventBatch(ctx, tokenEvents); err != nil {
+		metrics.DBErrors.Inc()
 		return fmt.Errorf("insert token events: %w", err)
 	}
 	if err := db.InsertContractEventBatch(ctx, contractEvents); err != nil {
+		metrics.DBErrors.Inc()
 		return fmt.Errorf("insert contract events: %w", err)
 	}
 
 	// Update cursor
 	if err := db.SetLastIngestedLedger(ctx, ledgerEntry.Sequence); err != nil {
+		metrics.DBErrors.Inc()
 		return fmt.Errorf("update cursor: %w", err)
 	}
+
+	metrics.LedgersIngested.Inc()
+	metrics.TransactionsIngested.Add(float64(len(storeTxs)))
+	metrics.OperationsIngested.Add(float64(len(storeOps)))
 
 	// Publish if publisher is set
 	if pub != nil {

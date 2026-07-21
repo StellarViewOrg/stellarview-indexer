@@ -34,6 +34,26 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.WorkerCount != 8 {
 		t.Errorf("expected worker count 8, got %d", cfg.WorkerCount)
 	}
+	if cfg.MetricsAddr != "" {
+		t.Errorf("expected metrics server disabled by default, got MetricsAddr=%q", cfg.MetricsAddr)
+	}
+}
+
+func TestLoad_MetricsAddrOptIn(t *testing.T) {
+	os.Setenv("RPC_ENDPOINT", "https://rpc.example.com")
+	os.Setenv("METRICS_ADDR", ":9090")
+	defer func() {
+		os.Unsetenv("RPC_ENDPOINT")
+		os.Unsetenv("METRICS_ADDR")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MetricsAddr != ":9090" {
+		t.Errorf("expected MetricsAddr ':9090', got '%s'", cfg.MetricsAddr)
+	}
 }
 
 func TestLoad_EnvOverride(t *testing.T) {
