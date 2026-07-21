@@ -276,6 +276,26 @@ func extractOperationDetails(op xdr.Operation) map[string]interface{} {
 	case xdr.OperationTypeChangeTrust:
 		ct := op.Body.MustChangeTrustOp()
 		details["limit"] = fmt.Sprintf("%d", ct.Limit)
+	case xdr.OperationTypeManageSellOffer:
+		o := op.Body.MustManageSellOfferOp()
+		details["selling"] = assetString(o.Selling)
+		details["buying"] = assetString(o.Buying)
+		details["amount"] = fmt.Sprintf("%d", o.Amount)
+		details["price"] = fmt.Sprintf("%d/%d", o.Price.N, o.Price.D)
+		details["offer_id"] = fmt.Sprintf("%d", o.OfferId)
+	case xdr.OperationTypeManageBuyOffer:
+		o := op.Body.MustManageBuyOfferOp()
+		details["selling"] = assetString(o.Selling)
+		details["buying"] = assetString(o.Buying)
+		details["buy_amount"] = fmt.Sprintf("%d", o.BuyAmount)
+		details["price"] = fmt.Sprintf("%d/%d", o.Price.N, o.Price.D)
+		details["offer_id"] = fmt.Sprintf("%d", o.OfferId)
+	case xdr.OperationTypeCreatePassiveSellOffer:
+		o := op.Body.MustCreatePassiveSellOfferOp()
+		details["selling"] = assetString(o.Selling)
+		details["buying"] = assetString(o.Buying)
+		details["amount"] = fmt.Sprintf("%d", o.Amount)
+		details["price"] = fmt.Sprintf("%d/%d", o.Price.N, o.Price.D)
 	}
 
 	return details
@@ -326,6 +346,27 @@ func enrichOperation(storeOp *store.Operation, op xdr.Operation, details map[str
 		invoke := op.Body.MustInvokeHostFunctionOp()
 		fnType := invoke.HostFunction.Type.String()
 		storeOp.FunctionName = &fnType
+	case xdr.OperationTypeManageSellOffer:
+		o := op.Body.MustManageSellOfferOp()
+		amount := fmt.Sprintf("%d", o.Amount)
+		storeOp.Amount = &amount
+		code, issuer := assetParts(o.Selling)
+		storeOp.AssetCode = code
+		storeOp.AssetIssuer = issuer
+	case xdr.OperationTypeManageBuyOffer:
+		o := op.Body.MustManageBuyOfferOp()
+		amount := fmt.Sprintf("%d", o.BuyAmount)
+		storeOp.Amount = &amount
+		code, issuer := assetParts(o.Selling)
+		storeOp.AssetCode = code
+		storeOp.AssetIssuer = issuer
+	case xdr.OperationTypeCreatePassiveSellOffer:
+		o := op.Body.MustCreatePassiveSellOfferOp()
+		amount := fmt.Sprintf("%d", o.Amount)
+		storeOp.Amount = &amount
+		code, issuer := assetParts(o.Selling)
+		storeOp.AssetCode = code
+		storeOp.AssetIssuer = issuer
 	}
 }
 
