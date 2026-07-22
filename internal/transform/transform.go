@@ -321,6 +321,28 @@ func extractOperationDetails(op xdr.Operation) map[string]interface{} {
 	case xdr.OperationTypeRevokeSponsorship:
 		o := op.Body.MustRevokeSponsorshipOp()
 		revokeSponsorshipDetails(details, o)
+	case xdr.OperationTypeLiquidityPoolDeposit:
+		o := op.Body.MustLiquidityPoolDepositOp()
+		poolId := o.LiquidityPoolId
+		details["liquidity_pool_id"] = hex.EncodeToString(poolId[:])
+		details["max_amount_a"] = fmt.Sprintf("%d", o.MaxAmountA)
+		details["max_amount_b"] = fmt.Sprintf("%d", o.MaxAmountB)
+		details["min_price"] = fmt.Sprintf("%d/%d", o.MinPrice.N, o.MinPrice.D)
+		details["max_price"] = fmt.Sprintf("%d/%d", o.MaxPrice.N, o.MaxPrice.D)
+	case xdr.OperationTypeLiquidityPoolWithdraw:
+		o := op.Body.MustLiquidityPoolWithdrawOp()
+		poolId := o.LiquidityPoolId
+		details["liquidity_pool_id"] = hex.EncodeToString(poolId[:])
+		details["amount"] = fmt.Sprintf("%d", o.Amount)
+		details["min_amount_a"] = fmt.Sprintf("%d", o.MinAmountA)
+		details["min_amount_b"] = fmt.Sprintf("%d", o.MinAmountB)
+	case xdr.OperationTypeExtendFootprintTtl:
+		o := op.Body.MustExtendFootprintTtlOp()
+		details["extend_to"] = fmt.Sprintf("%d", o.ExtendTo)
+	case xdr.OperationTypeRestoreFootprint:
+		// The footprint being restored comes from the transaction's Soroban
+		// data, not the operation body; the "type" entry set above is the
+		// complete detail.
 	}
 
 	return details
@@ -399,6 +421,10 @@ func enrichOperation(storeOp *store.Operation, op xdr.Operation, details map[str
 		code, issuer := assetParts(o.Asset)
 		storeOp.AssetCode = code
 		storeOp.AssetIssuer = issuer
+	case xdr.OperationTypeLiquidityPoolWithdraw:
+		o := op.Body.MustLiquidityPoolWithdrawOp()
+		amount := fmt.Sprintf("%d", o.Amount)
+		storeOp.Amount = &amount
 	}
 }
 
