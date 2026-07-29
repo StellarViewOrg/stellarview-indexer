@@ -384,6 +384,32 @@ func extractOperationDetails(op xdr.Operation) map[string]interface{} {
 	case xdr.OperationTypeExtendFootprintTtl:
 		o := op.Body.MustExtendFootprintTtlOp()
 		details["extend_to"] = fmt.Sprintf("%d", o.ExtendTo)
+	case xdr.OperationTypeAllowTrust:
+		a := op.Body.MustAllowTrustOp()
+		details["trustor"] = a.Trustor.Address()
+		details["asset_code"] = assetCodeString(a.Asset)
+		details["authorize"] = fmt.Sprintf("%d", a.Authorize)
+	case xdr.OperationTypeSetTrustLineFlags:
+		s := op.Body.MustSetTrustLineFlagsOp()
+		details["trustor"] = s.Trustor.Address()
+		details["asset"] = assetString(s.Asset)
+		details["set_flags"] = fmt.Sprintf("%d", s.SetFlags)
+		details["clear_flags"] = fmt.Sprintf("%d", s.ClearFlags)
+	case xdr.OperationTypeClawback:
+		c := op.Body.MustClawbackOp()
+		base, muxed, muxedID := parseMuxedAccount(c.From)
+		details["from"] = base
+		if muxed != nil {
+			details["from_muxed"] = *muxed
+		}
+		if muxedID != nil {
+			details["from_muxed_id"] = fmt.Sprintf("%d", *muxedID)
+		}
+		details["asset"] = assetString(c.Asset)
+		details["amount"] = fmt.Sprintf("%d", c.Amount)
+	case xdr.OperationTypeClawbackClaimableBalance:
+		c := op.Body.MustClawbackClaimableBalanceOp()
+		details["balance_id"] = claimableBalanceIdString(c.BalanceId)
 	case xdr.OperationTypeRestoreFootprint:
 		// The footprint being restored comes from the transaction's Soroban
 		// data, not the operation body; the "type" entry set above is the
@@ -476,6 +502,17 @@ func enrichOperation(storeOp *store.Operation, op xdr.Operation, details map[str
 		storeOp.Destination = &base
 		storeOp.DestinationMuxed = muxed
 		storeOp.DestinationMuxedID = muxedID
+	case xdr.OperationTypeClawback:
+		c := op.Body.MustClawbackOp()
+		base, muxed, muxedID := parseMuxedAccount(c.From)
+		storeOp.Destination = &base
+		storeOp.DestinationMuxed = muxed
+		storeOp.DestinationMuxedID = muxedID
+		amount := fmt.Sprintf("%d", c.Amount)
+		storeOp.Amount = &amount
+		code, issuer := assetParts(c.Asset)
+		storeOp.AssetCode = code
+		storeOp.AssetIssuer = issuer
 	}
 }
 
@@ -637,4 +674,18 @@ func trustLineAssetString(a xdr.TrustLineAsset) string {
 		return "liquidity_pool:" + hex.EncodeToString(id[:])
 	}
 	return assetString(a.ToAsset())
+}
+
+// assetCodeString extracts just the asset code (e.g., "USDC") from an AssetCode,
+// not the issuer. Used by allow_trust and set_trust_line_flags where the asset code
+// alone is stored separately from the issuer.
+func assetCodeString(assetCode xdr.AssetCode) string {
+	switch assetCode.Type {
+	case xdr.AssetTypeAssetTypeCreditAlphanum4:
+		return strings.TrimRight(string(assetCode.AssetCode4[:]), "\x00")
+	case xdr.AssetTypeAssetTypeCreditAlphanum12:
+		return strings.TrimRight(string(assetCode.AssetCode12[:]), "\x00")
+	default:
+		return "unknown"
+	}
 }
