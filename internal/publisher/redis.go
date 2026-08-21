@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	ChannelLedgers      = "stream:ledgers"
-	ChannelTransactions = "stream:transactions"
+	ChannelLedgers       = "stream:ledgers"
+	ChannelTransactions  = "stream:transactions"
+	ChannelVerifications = "stream:verifications"
 )
 
 // RedisPublisher publishes ingestion events to Redis pub/sub channels.
@@ -106,6 +107,26 @@ func (p *RedisPublisher) PublishTransactions(ctx context.Context, txs []store.Tr
 	}
 
 	return nil
+}
+
+func (p *RedisPublisher) PublishVerification(ctx context.Context, evt VerificationSummary) error {
+	data, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal verification summary: %w", err)
+	}
+	if err := p.client.Publish(ctx, ChannelVerifications, data).Err(); err != nil {
+		log.Printf("redis publish verification %s: %v", evt.ID, err)
+		return err
+	}
+	return nil
+}
+
+type VerificationSummary struct {
+	ID         string  `json:"id"`
+	ContractID string  `json:"contract_id"`
+	Status     string  `json:"status"`
+	Match      *bool   `json:"match"`
+	WasmHash   *string `json:"wasm_hash"`
 }
 
 func (p *RedisPublisher) Close() error {

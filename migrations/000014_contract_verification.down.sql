@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS source_files CASCADE;
+DROP TABLE IF EXISTS verified_sources CASCADE;
+DROP TABLE IF EXISTS contract_verifications CASCADE;

@@ -34,6 +34,21 @@ make build
 | `WORKER_COUNT` | `8`                                                                                   | No       | Parallel workers for `backfill` and `s3backfill`          |
 | `METRICS_ADDR` | —                                                                                     | No       | Listen address (e.g. `:9090`) for `/metrics` and `/healthz` during `live` ingestion. Disabled when unset. |
 
+### Contract verification
+
+| Variable                 | Default                              | Required | Description                                              |
+| ------------------------ | ------------------------------------ | -------- | -------------------------------------------------------- |
+| `VERIFY_API_ADDR`        | `:8080`                              | No       | Listen address for the verification API (`api` command)  |
+| `VERIFY_BUILDER_IMAGE`   | `stellarview/soroban-builder:latest` | No       | Docker image used for sandboxed reproducible builds      |
+| `VERIFY_WORKSPACE_DIR`   | OS temp dir                          | No       | Scratch dir for build workspaces                         |
+| `VERIFY_MAX_ARCHIVE_MB`  | `20`                                 | No       | Max compressed upload size in MB                         |
+| `VERIFY_MAX_EXTRACTED_MB`| `100`                                | No       | Max uncompressed source size in MB                       |
+| `VERIFY_RATE_RPS`        | `1`                                  | No       | Verification submissions per second per IP               |
+| `VERIFY_RATE_BURST`      | `5`                                  | No       | Per-IP burst allowance                                   |
+| `VERIFY_QUEUE_SIZE`      | `16`                                 | No       | Max queued verification jobs                             |
+| `VERIFY_BUILD_CONCURRENCY` | `2`                                | No       | Parallel sandboxed builds                                |
+| `VERIFY_BUILD_TIMEOUT_MIN` | `20`                               | No       | Per-build timeout in minutes                             |
+
 ### Observability
 
 When `METRICS_ADDR` is set, `live` starts an HTTP server alongside ingestion:
@@ -47,9 +62,11 @@ When `METRICS_ADDR` is set, `live` starts an HTTP server alongside ingestion:
 make build          # Compile to bin/indexer
 make migrate        # Apply pending database migrations
 make run-live       # Live ingestion (requires RPC_ENDPOINT env var)
+make run-api        # Contract verification API (requires Docker + builder image)
 make test           # Run all tests
 make fmt            # Format code
 make lint           # Run go vet
+make builder-image  # Build the sandboxed Soroban builder image
 make clean          # Remove bin/
 ```
 
@@ -103,6 +120,41 @@ Key details:
 
 # Use more workers for faster throughput
 WORKER_COUNT=16 ./bin/indexer s3backfill --start 3 --end 5000000
+```
+
+## Contract source verification
+
+The `api` command serves the contract verification API: developers submit their
+contract source (zip/tar archive or git reference), it is built reproducibly in
+a sandboxed Docker container, and the resulting WASM hash is compared against
+the on-chain `contract_code.wasm_hash`. Matching source is stored and served by
+wasm hash.
+
+```bash
+# one-time: build the pinned builder image (Rust + stellar-cli, offline cargo cache)
+make builder-image
+
+# run the API
+make run-api
+```
+
+The full frozen v1 HTTP contract lives in [`docs/api/contract-verification.md`](docs/api/contract-verification.md).
+
+Key properties:
+
+- **Reproducible** — builds run in a pinned image (`rust:1.85`, `stellar-cli@22.0.8`) with no network; identical bytecode shares a single verified-source record keyed by wasm hash.
+- **Sandboxed** — containers run with `--network=none --read-only --cap-drop=ALL --user 1000:1000`, memory/CPU/pids caps, and tmpfs scratch space.
+- **Hardened uploads** — archives are magic-byte sniffed; path traversal, absolute paths, symlinks/devices, zip bombs (ratio + size caps), and excessive file counts are rejected before the builder ever runs.
+- **Rate limited** — per-IP token bucket (`VERIFY_RATE_RPS`/`VERIFY_RATE_BURST`).
+
+The golden-file test proves build reproducibility end-to-end (requires Docker
+and the builder image; skips otherwise):
+
+```bash
+go test ./internal/verify/ -run TestGoldenReproducibleBuild -v
+
+# after an intentional toolchain bump, regenerate:
+go test ./internal/verify/ -run TestGoldenReproducibleBuild -update-golden
 ```
 
 ## Migrations
@@ -236,3 +288,4 @@ AWS S3 ─────> source/datalake.go ─────────┘       
 | `internal/store`     | PostgreSQL writer with batch inserts and ingestion cursor               |
 | `internal/pipeline`  | Live ingestion loop and parallel backfill orchestration                 |
 | `internal/publisher` | Redis pub/sub for real-time event streaming                             |
+| `internal/verify`    | Contract source verification: submission, sandboxed builds, source hosting |

@@ -16,6 +16,7 @@ import (
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/publisher"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/source"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/store"
+	"github.com/miguelnietoa/stellar-explorer/indexer/internal/verify"
 )
 
 func main() {
@@ -31,7 +32,7 @@ func main() {
 	fmt.Printf("  Workers:    %d\n", cfg.WorkerCount)
 
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: indexer <live|backfill|s3backfill|migrate>")
+		fmt.Println("Usage: indexer <live|backfill|s3backfill|migrate|api>")
 		os.Exit(1)
 	}
 
@@ -50,8 +51,10 @@ func main() {
 		runS3Backfill(cfg)
 	case "migrate":
 		runMigrate(cfg.DatabaseURL)
+	case "api":
+		runAPI(cfg)
 	default:
-		log.Fatalf("Unknown command: %s. Use: live, backfill, s3backfill, migrate", os.Args[1])
+		log.Fatalf("Unknown command: %s. Use: live, backfill, s3backfill, migrate, api", os.Args[1])
 	}
 }
 
@@ -195,4 +198,82 @@ func parseBackfillFlags() (uint32, uint32) {
 	}
 
 	return startLedger, endLedger
+}
+
+type verificationPublisher struct {
+	pub *publisher.RedisPublisher
+}
+
+func (a verificationPublisher) PublishVerification(ctx context.Context, evt verify.VerificationEvent) error {
+	return a.pub.PublishVerification(ctx, publisher.VerificationSummary{
+		ID:         evt.ID,
+		ContractID: evt.ContractID,
+		Status:     evt.Status,
+		Match:      evt.Match,
+		WasmHash:   evt.WasmHash,
+	})
+}
+
+func runAPI(cfg *config.Config) {
+	ctx, cancel := setupContext()
+	defer cancel()
+
+	db, err := store.NewPostgresStore(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	if n, err := verify.NewPGStore(db.DB()).FailInterrupted(ctx); err != nil {
+		log.Printf("verify: cleanup interrupted jobs: %v", err)
+	} else if n > 0 {
+		log.Printf("verify: marked %d interrupted verification(s) as failed", n)
+	}
+
+	var pub verify.EventPublisher
+	if cfg.RedisURL != "" {
+		rp, err := publisher.NewRedisPublisher(cfg.RedisURL)
+		if err != nil {
+			log.Printf("Warning: Redis publisher unavailable: %v", err)
+		} else {
+			defer rp.Close()
+			pub = verificationPublisher{pub: rp}
+			log.Println("Redis publisher attached (stream:verifications)")
+		}
+	}
+
+	svc, err := verify.NewService(verify.ServiceConfig{
+		Store:            verify.NewPGStore(db.DB()),
+		Builder:          verify.NewDockerBuilder(cfg.VerifyBuilderImage),
+		Publisher:        pub,
+		Limiter:          verify.NewIPRateLimiter(cfg.VerifyRateRPS, cfg.VerifyRateBurst),
+		Network:          cfg.Network,
+		WorkspaceDir:     cfg.VerifyWorkspaceDir,
+		MaxArchiveBytes:  int64(cfg.VerifyMaxArchiveMB) << 20,
+		ExtractLimits:    verify.DefaultExtractLimits(int64(cfg.VerifyMaxExtractedMB) << 20),
+		QueueSize:        cfg.VerifyQueueSize,
+		BuildConcurrency: cfg.VerifyBuildConcurrency,
+		BuildTimeout:     time.Duration(cfg.VerifyBuildTimeoutMin) * time.Minute,
+	})
+	if err != nil {
+		log.Fatalf("Failed to initialize verification service: %v", err)
+	}
+	svc.Start(cfg.VerifyBuildConcurrency)
+
+	srv := verify.NewServer(cfg.VerifyAPIAddr, svc)
+	go func() {
+		log.Printf("verification API listening on %s (/api/v1/...)", cfg.VerifyAPIAddr)
+		if err := srv.Start(); err != nil {
+			log.Printf("verification API error: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("verification API shutdown error: %v", err)
+	}
+	svc.Stop(10 * time.Second)
+	log.Println("Shutdown complete.")
 }

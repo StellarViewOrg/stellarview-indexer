@@ -45,6 +45,31 @@ var (
 		Name:      "ingestion_lag_ledgers",
 		Help:      "Number of ledgers between the network tip and the last ingested ledger.",
 	})
+
+	VerificationSubmissions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Name:      "verification_submissions_total",
+		Help:      "Contract verification submissions by result (accepted/rejected).",
+	}, []string{"result"})
+
+	VerificationBuilds = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "indexer",
+		Name:      "verification_builds_total",
+		Help:      "Completed verification builds by outcome (verified/mismatch/failed).",
+	}, []string{"outcome"})
+
+	VerificationQueueLength = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "indexer",
+		Name:      "verification_queue_length",
+		Help:      "Number of verification jobs waiting to be built.",
+	})
+
+	VerificationBuildDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "indexer",
+		Name:      "verification_build_duration_seconds",
+		Help:      "Wall-clock duration of verification builds.",
+		Buckets:   []float64{1, 5, 15, 30, 60, 120, 300, 600, 1200},
+	})
 )
 
 // Registry is the Prometheus registry the /metrics endpoint serves. Using a
@@ -60,5 +85,9 @@ func init() {
 		RPCErrors,
 		DBErrors,
 		IngestionLagLedgers,
+		VerificationSubmissions,
+		VerificationBuilds,
+		VerificationQueueLength,
+		VerificationBuildDuration,
 	)
 }
