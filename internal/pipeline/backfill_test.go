@@ -21,7 +21,7 @@ func TestBackfillProcessLedgerBatch(t *testing.T) {
 	p := NewBackfillPipeline(rpc, db, network.TestNetworkPassphrase, 3, 1)
 
 	start := latest.Sequence - 4
-	count, err := p.processLedgerBatch(ctx, start, 2)
+	count, err := p.processLedgerBatch(ctx, start, 2, nil)
 	if err != nil {
 		t.Fatalf("processLedgerBatch: %v", err)
 	}

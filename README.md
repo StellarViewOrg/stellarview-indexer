@@ -31,7 +31,7 @@ make build
 | `DATABASE_URL` | `postgresql://explorer:explorer_dev@localhost:54320/stellar_explorer?sslmode=disable` | No       | PostgreSQL connection. Change `sslmode=disable` to `sslmode=require` in production. |
 | `REDIS_URL`    | `redis://localhost:63790`                                                             | No       | Redis connection (optional — logs warning if unavailable) |
 | `BATCH_SIZE`   | `100`                                                                                 | No       | Ledgers per batch                                         |
-| `WORKER_COUNT` | `8`                                                                                   | No       | Parallel workers for `backfill` and `s3backfill`          |
+| `WORKER_COUNT` | `8`                                                                                   | No       | Parallel workers for `backfill` / `s3backfill`, and for live contract-spec processing |
 | `METRICS_ADDR` | —                                                                                     | No       | Listen address (e.g. `:9090`) for `/metrics`, `/healthz`, and `/v1/domains` during `live` ingestion. Disabled when unset. Also serves the domains read API when `HTTP_ADDR` is unset. |
 | `HTTP_ADDR`    | —                                                                                     | No       | Listen address for the domains read API (and `/metrics` `/healthz`). Overrides `METRICS_ADDR` when both are set. |
 | `DOMAINS_REGISTRY_CONTRACT_ID` | pubnet default (see below) | No | Comma-separated Soroban Domains registry contract ID(s). Required on testnet/futurenet. |

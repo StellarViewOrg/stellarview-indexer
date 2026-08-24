@@ -47,7 +47,7 @@ func TestProcessLedgerBatch(t *testing.T) {
 	}
 
 	// Process 2 ledgers from near the tip
-	p := NewLivePipeline(rpc, db, network.TestNetworkPassphrase, 10)
+	p := NewLivePipeline(rpc, db, network.TestNetworkPassphrase, 10, 2)
 	start := latest.Sequence - 3
 	count, err := p.processLedgerBatch(ctx, start, 2)
 	if err != nil {
@@ -78,7 +78,7 @@ func TestLivePipelineRunAndStop(t *testing.T) {
 	rpc, db := getTestDeps(t)
 	defer db.Close()
 
-	p := NewLivePipeline(rpc, db, network.TestNetworkPassphrase, 5)
+	p := NewLivePipeline(rpc, db, network.TestNetworkPassphrase, 5, 2)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -126,7 +126,7 @@ func TestDetectAndFillGapsRefillsSyntheticGap(t *testing.T) {
 		t.Fatalf("GetLatestLedger failed: %v", err)
 	}
 
-	p := NewLivePipeline(rpc, db, network.TestNetworkPassphrase, 10)
+	p := NewLivePipeline(rpc, db, network.TestNetworkPassphrase, 10, 2)
 
 	start := latest.Sequence - 6
 	count, err := p.processLedgerBatch(ctx, start, 5)

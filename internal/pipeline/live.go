@@ -26,15 +26,23 @@ type LivePipeline struct {
 	publisher         Publisher
 	networkPassphrase string
 	batchSize         int
+	workerCount       int
 	registryIDs       []string
+	// specSubmit is set while Run is active; nil outside Run (e.g. tests that
+	// call processLedgerBatch directly process specs synchronously).
+	specSubmit func(transform.DetectedContract)
 }
 
-func NewLivePipeline(rpc *source.RPCClient, store *store.PostgresStore, networkPassphrase string, batchSize int) *LivePipeline {
+func NewLivePipeline(rpc *source.RPCClient, store *store.PostgresStore, networkPassphrase string, batchSize, workerCount int) *LivePipeline {
+	if workerCount <= 0 {
+		workerCount = 1
+	}
 	return &LivePipeline{
 		rpc:               rpc,
 		store:             store,
 		networkPassphrase: networkPassphrase,
 		batchSize:         batchSize,
+		workerCount:       workerCount,
 	}
 }
 
@@ -47,8 +55,24 @@ func (p *LivePipeline) SetRegistryContractIDs(ids []string) {
 }
 
 // Run starts the live ingestion loop. It blocks until the context is cancelled.
+// On shutdown it drains the contract-spec worker pool so in-flight
+// ProcessContractSpec calls finish before Run returns.
 func (p *LivePipeline) Run(ctx context.Context) error {
 	log.Println("live pipeline: starting")
+
+	pool := newContractSpecPool(p.rpc, p.store, p.workerCount)
+	pool.Start(ctx)
+	p.specSubmit = func(c transform.DetectedContract) {
+		if err := pool.Submit(ctx, c); err != nil {
+			log.Printf("contract_spec: submit %s: %v", c.ContractID, err)
+		}
+	}
+	defer func() {
+		p.specSubmit = nil
+		log.Println("live pipeline: draining contract spec workers")
+		pool.Stop()
+		log.Println("live pipeline: stopped")
+	}()
 
 	gapTicker := time.NewTicker(5 * time.Minute)
 	defer gapTicker.Stop()
@@ -215,14 +239,15 @@ func (p *LivePipeline) processLedgerBatch(ctx context.Context, startLedger uint3
 }
 
 func (p *LivePipeline) processOneLedger(ctx context.Context, ledgerEntry source.LedgerEntry, txEntries []source.TransactionEntry) error {
-	return ProcessOneLedger(ctx, p.rpc, p.store, p.publisher, p.networkPassphrase, ledgerEntry, txEntries, p.registryIDs)
+	return ProcessOneLedger(ctx, p.rpc, p.store, p.publisher, p.networkPassphrase, ledgerEntry, txEntries, p.registryIDs, p.specSubmit)
 }
 
 // ProcessOneLedger transforms and stores a single ledger with its transactions and operations.
 // It is exported so that different pipeline implementations (live, backfill, S3) can reuse it.
-// rpc may be nil — when provided, new contracts discovered in the ledger are processed asynchronously.
+// rpc may be nil — when provided, new contracts discovered in the ledger are submitted via
+// submitSpec when non-nil (bounded worker pool), otherwise processed synchronously with ctx.
 // registryIDs are Soroban Domains registry contract IDs to index; empty disables domain ingestion.
-func ProcessOneLedger(ctx context.Context, rpc *source.RPCClient, db *store.PostgresStore, pub Publisher, networkPassphrase string, ledgerEntry source.LedgerEntry, txEntries []source.TransactionEntry, registryIDs []string) error {
+func ProcessOneLedger(ctx context.Context, rpc *source.RPCClient, db *store.PostgresStore, pub Publisher, networkPassphrase string, ledgerEntry source.LedgerEntry, txEntries []source.TransactionEntry, registryIDs []string, submitSpec func(transform.DetectedContract)) error {
 	// Transform ledger
 	ledger, err := transform.LedgerFromRPC(ledgerEntry)
 	if err != nil {
@@ -297,7 +322,8 @@ func ProcessOneLedger(ctx context.Context, rpc *source.RPCClient, db *store.Post
 		metrics.DBErrors.Inc()
 		return fmt.Errorf("insert operations: %w", err)
 	}
-	// Detect newly created contracts and process their specs asynchronously
+	// Detect newly created contracts and process their specs via the submitter
+	// (bounded pool) or synchronously when no submitter is configured.
 	if rpc != nil && ledgerEntry.MetadataXDR != "" {
 		closedAt := ledger.ClosedAt
 		if detected, err := transform.DetectNewContracts(ledgerEntry.MetadataXDR, ledgerEntry.Sequence, closedAt); err != nil {
@@ -305,7 +331,11 @@ func ProcessOneLedger(ctx context.Context, rpc *source.RPCClient, db *store.Post
 		} else {
 			log.Printf("ledger %d: detected %d new contracts", ledgerEntry.Sequence, len(detected))
 			for _, c := range detected {
-				go transform.ProcessContractSpec(context.Background(), rpc, db, c)
+				if submitSpec != nil {
+					submitSpec(c)
+				} else {
+					transform.ProcessContractSpec(ctx, rpc, db, c)
+				}
 			}
 		}
 	} else {

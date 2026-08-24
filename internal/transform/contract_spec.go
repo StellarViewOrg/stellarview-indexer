@@ -143,7 +143,8 @@ func DetectNewContracts(metaXDR string, ledgerSeq uint32, closedAt time.Time) ([
 }
 
 // ProcessContractSpec fetches WASM, parses the contract spec, classifies the contract,
-// and upserts it into the store. This is designed to run asynchronously.
+// and upserts it into the store. Callers should run it via a bounded worker pool
+// (or synchronously); it respects ctx cancellation for RPC and DB calls.
 func ProcessContractSpec(ctx context.Context, rpc *source.RPCClient, db *store.PostgresStore, contract DetectedContract) {
 	log.Printf("contract_spec: starting processing for %s (ledger %d)", contract.ContractID, contract.CreatedLedger)
 	// Step 1: Fetch contract instance to get wasm_hash

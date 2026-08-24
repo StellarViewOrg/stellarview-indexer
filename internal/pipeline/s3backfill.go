@@ -132,7 +132,7 @@ func (p *S3BackfillPipeline) runWorker(ctx context.Context, id int, start, end u
 			return fmt.Errorf("convert transactions for ledger %d: %w", seq, err)
 		}
 
-		if err := ProcessOneLedger(ctx, nil, p.store, nil, network.PublicNetworkPassphrase, ledgerEntry, txEntries, p.registryIDs); err != nil {
+		if err := ProcessOneLedger(ctx, nil, p.store, nil, network.PublicNetworkPassphrase, ledgerEntry, txEntries, p.registryIDs, nil); err != nil {
 			return fmt.Errorf("process ledger %d: %w", seq, err)
 		}
 

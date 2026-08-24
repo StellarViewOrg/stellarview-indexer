@@ -9,6 +9,7 @@ import (
 
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/source"
 	"github.com/miguelnietoa/stellar-explorer/indexer/internal/store"
+	"github.com/miguelnietoa/stellar-explorer/indexer/internal/transform"
 )
 
 // BackfillPipeline processes a historical range of ledgers using parallel workers.
@@ -45,6 +46,16 @@ func (p *BackfillPipeline) Run(ctx context.Context, startLedger, endLedger uint3
 	log.Printf("backfill: processing ledgers %d to %d (%d total) with %d workers",
 		startLedger, endLedger, totalLedgers, p.workerCount)
 
+	pool := newContractSpecPool(p.rpc, p.store, p.workerCount)
+	pool.Start(ctx)
+	defer pool.Stop()
+
+	submitSpec := func(c transform.DetectedContract) {
+		if err := pool.Submit(ctx, c); err != nil {
+			log.Printf("contract_spec: submit %s: %v", c.ContractID, err)
+		}
+	}
+
 	// Split range across workers
 	workers := p.workerCount
 	if int(totalLedgers) < workers {
@@ -66,7 +77,7 @@ func (p *BackfillPipeline) Run(ctx context.Context, startLedger, endLedger uint3
 
 		go func(id int, start, end uint32) {
 			defer wg.Done()
-			err := p.runWorker(ctx, id, start, end, &processedTotal)
+			err := p.runWorker(ctx, id, start, end, &processedTotal, submitSpec)
 			if err != nil {
 				errCh <- fmt.Errorf("worker %d: %w", id, err)
 			}
@@ -91,7 +102,7 @@ func (p *BackfillPipeline) Run(ctx context.Context, startLedger, endLedger uint3
 	return nil
 }
 
-func (p *BackfillPipeline) runWorker(ctx context.Context, id int, start, end uint32, processed *atomic.Int64) error {
+func (p *BackfillPipeline) runWorker(ctx context.Context, id int, start, end uint32, processed *atomic.Int64, submitSpec func(transform.DetectedContract)) error {
 	log.Printf("backfill worker %d: processing ledgers %d to %d", id, start, end)
 
 	cursor := start
@@ -108,7 +119,7 @@ func (p *BackfillPipeline) runWorker(ctx context.Context, id int, start, end uin
 			limit = remaining
 		}
 
-		count, err := p.processLedgerBatch(ctx, cursor, limit)
+		count, err := p.processLedgerBatch(ctx, cursor, limit, submitSpec)
 		if err != nil {
 			return fmt.Errorf("batch at ledger %d: %w", cursor, err)
 		}
@@ -132,7 +143,7 @@ func (p *BackfillPipeline) runWorker(ctx context.Context, id int, start, end uin
 
 // processLedgerBatch fetches a batch of ledgers via getLedgers and extracts
 // transactions from each ledger's MetadataXDR (LedgerCloseMeta).
-func (p *BackfillPipeline) processLedgerBatch(ctx context.Context, startLedger uint32, limit int) (int, error) {
+func (p *BackfillPipeline) processLedgerBatch(ctx context.Context, startLedger uint32, limit int, submitSpec func(transform.DetectedContract)) (int, error) {
 	ledgerResult, err := p.rpc.GetLedgers(ctx, source.GetLedgersParams{
 		StartLedger: startLedger,
 		Pagination:  &source.Pagination{Limit: limit},
@@ -157,7 +168,7 @@ func (p *BackfillPipeline) processLedgerBatch(ctx context.Context, startLedger u
 			return processed, fmt.Errorf("extract txs ledger %d: %w", rpcLedger.Sequence, err)
 		}
 
-		if err := ProcessOneLedger(ctx, p.rpc, p.store, nil, p.networkPassphrase, rpcLedger, txEntries, p.registryIDs); err != nil {
+		if err := ProcessOneLedger(ctx, p.rpc, p.store, nil, p.networkPassphrase, rpcLedger, txEntries, p.registryIDs, submitSpec); err != nil {
 			return processed, fmt.Errorf("process ledger %d: %w", rpcLedger.Sequence, err)
 		}
 		processed++
