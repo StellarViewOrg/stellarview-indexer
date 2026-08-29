@@ -11,6 +11,7 @@ package analytics
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -42,7 +43,9 @@ const (
 	// way and an aggregate cannot join them to the transaction's status. Do
 	// not present it as accounts successfully created.
 	MetricNewAccounts Metric = "new_accounts"
-	// MetricAssetSupply totals net supply change (mints minus burns and clawbacks).
+	// MetricAssetSupply totals net supply change (mints minus burns and
+	// clawbacks). Unfiltered, it sums every asset (see AssetFilter to narrow
+	// it to one).
 	MetricAssetSupply Metric = "asset_supply"
 )
 
@@ -141,7 +144,11 @@ type TimeSeriesPoint struct {
 // is never null: a metric with nothing aggregated yet returns an empty slice,
 // which the explorer renders as a "not available yet" state.
 type TimeSeriesResponse struct {
-	Metric     Metric            `json:"metric"`
+	Metric Metric `json:"metric"`
+	// Asset is set only when the request carried an asset filter (currently
+	// only meaningful for asset_supply). Omitted entirely otherwise, so the
+	// frozen unfiltered shape is byte-for-byte unchanged for existing clients.
+	Asset      string            `json:"asset,omitempty"`
 	Resolution Resolution        `json:"resolution"`
 	From       time.Time         `json:"from"`
 	To         time.Time         `json:"to"`
@@ -167,6 +174,95 @@ type TopResponse struct {
 	Metric TopMetric  `json:"metric"`
 	Window Window     `json:"window"`
 	Data   []TopEntry `json:"data"`
+}
+
+// AssetFilter narrows a time series to a single asset. It is only meaningful
+// for MetricAssetSupply — ParseTimeSeriesRequest rejects it on every other
+// metric. A nil *AssetFilter means unfiltered (the frozen all-assets sum).
+type AssetFilter struct {
+	// Native is set for the native XLM asset.
+	Native bool
+	// Code and Issuer identify a classic (code-issuer) asset.
+	Code, Issuer string
+	// ContractID identifies a pure Soroban token by its contract, for assets
+	// never wrapped in a classic code/issuer pair.
+	ContractID string
+}
+
+// ID renders the filter back into the identifier form: "native", "CODE-ISSUER",
+// or a bare contract ID. This is the same shape TopEntry.ID uses for
+// asset_transfers, so a client can round-trip an identifier from one endpoint
+// into a filter on the other.
+func (f AssetFilter) ID() string {
+	switch {
+	case f.Native:
+		return "native"
+	case f.Issuer != "":
+		return f.Code + "-" + f.Issuer
+	default:
+		return f.ContractID
+	}
+}
+
+// strkeyLen is the fixed length of a StrKey-encoded Stellar account or
+// contract address.
+const strkeyLen = 56
+
+// maxAssetCodeLen is the longest a Stellar asset code may be.
+const maxAssetCodeLen = 12
+
+// ParseAssetFilter validates a raw "asset" query parameter. An empty string is
+// not an error — it means unfiltered, and returns a nil filter.
+//
+// Validation is shape-only: code charset and length, and address
+// length/prefix/alphabet for issuers and contract IDs. It is not a checksum or
+// existence check — decoding the StrKey checksum here would cost a decode for
+// no benefit, since a checksum failure and a well-formed-but-nonexistent asset
+// both simply produce an empty series, which is not an error for any other
+// metric either.
+func ParseAssetFilter(raw string) (*AssetFilter, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	if raw == "native" {
+		return &AssetFilter{Native: true}, nil
+	}
+	if code, issuer, ok := strings.Cut(raw, "-"); ok && isAssetCode(code) && isStrkeyShaped(issuer, 'G') {
+		return &AssetFilter{Code: code, Issuer: issuer}, nil
+	}
+	if isStrkeyShaped(raw, 'C') {
+		return &AssetFilter{ContractID: raw}, nil
+	}
+	return nil, fmt.Errorf(`%w: asset %q, want "native", "CODE-ISSUER", or a contract ID`, ErrInvalidParam, raw)
+}
+
+// isAssetCode reports whether s is shaped like a Stellar asset code: 1 to 12
+// alphanumeric characters.
+func isAssetCode(s string) bool {
+	if len(s) == 0 || len(s) > maxAssetCodeLen {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'A' && r <= 'Z') && !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// isStrkeyShaped reports whether s has the length and alphabet of a StrKey
+// address starting with prefix ('G' for an account, 'C' for a contract).
+func isStrkeyShaped(s string, prefix byte) bool {
+	if len(s) != strkeyLen || s[0] != prefix {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if !(c >= 'A' && c <= 'Z') && !(c >= '2' && c <= '7') {
+			return false
+		}
+	}
+	return true
 }
 
 // ParseMetric validates a raw metric parameter against AllMetrics.

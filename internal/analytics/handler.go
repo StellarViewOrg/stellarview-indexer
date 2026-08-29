@@ -27,7 +27,7 @@ const (
 // rather than in the store so handlers can be exercised without a database,
 // the same seam /healthz uses for its database ping.
 type Reader interface {
-	TimeSeries(ctx context.Context, metric Metric, resolution Resolution, from, to time.Time) ([]TimeSeriesPoint, error)
+	TimeSeries(ctx context.Context, metric Metric, resolution Resolution, from, to time.Time, asset *AssetFilter) ([]TimeSeriesPoint, error)
 	TopN(ctx context.Context, metric TopMetric, since, until time.Time, limit int) ([]TopEntry, error)
 }
 

@@ -26,6 +26,10 @@ type TimeSeriesRequest struct {
 	Resolution Resolution
 	From       time.Time
 	To         time.Time
+	// Asset narrows MetricAssetSupply to a single asset. Nil means unfiltered.
+	// Always nil for every other metric — ParseTimeSeriesRequest rejects an
+	// asset parameter on any metric that isn't asset_supply.
+	Asset *AssetFilter
 }
 
 // TopRequest is a validated /top query.
@@ -67,7 +71,24 @@ func ParseTimeSeriesRequest(q url.Values) (TimeSeriesRequest, error) {
 		return TimeSeriesRequest{}, err
 	}
 
-	return TimeSeriesRequest{Metric: metric, Resolution: resolution, From: from, To: to}, nil
+	asset, err := ParseAssetFilter(q.Get("asset"))
+	if err != nil {
+		return TimeSeriesRequest{}, err
+	}
+	// The filter only has a column to match against on asset_supply's per-asset
+	// aggregate. Accepting it elsewhere and silently ignoring it would look to
+	// the caller like filtering happened when it didn't.
+	if asset != nil && metric != MetricAssetSupply {
+		return TimeSeriesRequest{}, fmt.Errorf("%w: asset is only valid with metric=%s", ErrInvalidParam, MetricAssetSupply)
+	}
+
+	return TimeSeriesRequest{
+		Metric:     metric,
+		Resolution: resolution,
+		From:       from,
+		To:         to,
+		Asset:      asset,
+	}, nil
 }
 
 // ParseTopRequest validates the query parameters of a /top request. The limit
