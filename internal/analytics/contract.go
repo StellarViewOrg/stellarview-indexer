@@ -44,8 +44,8 @@ const (
 	// not present it as accounts successfully created.
 	MetricNewAccounts Metric = "new_accounts"
 	// MetricAssetSupply totals net supply change (mints minus burns and
-	// clawbacks). Unfiltered, it sums every asset (see AssetFilter to narrow
-	// it to one).
+	// clawbacks). Unfiltered, it sums every asset. Pass an AssetFilter to
+	// narrow it to one asset's net supply delta instead.
 	MetricAssetSupply Metric = "asset_supply"
 )
 
@@ -147,7 +147,8 @@ type TimeSeriesResponse struct {
 	Metric Metric `json:"metric"`
 	// Asset is set only when the request carried an asset filter (currently
 	// only meaningful for asset_supply). Omitted entirely otherwise, so the
-	// frozen unfiltered shape is byte-for-byte unchanged for existing clients.
+	// frozen unfiltered shape stays byte-for-byte unchanged for existing
+	// clients — this field is additive, not a breaking change to the contract.
 	Asset      string            `json:"asset,omitempty"`
 	Resolution Resolution        `json:"resolution"`
 	From       time.Time         `json:"from"`
@@ -182,7 +183,8 @@ type TopResponse struct {
 type AssetFilter struct {
 	// Native is set for the native XLM asset.
 	Native bool
-	// Code and Issuer identify a classic (code-issuer) asset.
+	// Code and Issuer identify a classic (code-issuer) asset. Both are set
+	// together or not at all.
 	Code, Issuer string
 	// ContractID identifies a pure Soroban token by its contract, for assets
 	// never wrapped in a classic code/issuer pair.
@@ -237,7 +239,8 @@ func ParseAssetFilter(raw string) (*AssetFilter, error) {
 }
 
 // isAssetCode reports whether s is shaped like a Stellar asset code: 1 to 12
-// alphanumeric characters.
+// alphanumeric characters. The protocol does not restrict case, so both are
+// accepted here.
 func isAssetCode(s string) bool {
 	if len(s) == 0 || len(s) > maxAssetCodeLen {
 		return false
