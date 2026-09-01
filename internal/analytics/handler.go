@@ -27,7 +27,12 @@ const (
 // rather than in the store so handlers can be exercised without a database,
 // the same seam /healthz uses for its database ping.
 type Reader interface {
-	TimeSeries(ctx context.Context, metric Metric, resolution Resolution, from, to time.Time) ([]TimeSeriesPoint, error)
+	// TimeSeries returns the series for metric over [from, to) at resolution.
+	// asset narrows the series to a single asset and is only meaningful for
+	// MetricAssetSupply; ParseTimeSeriesRequest rejects it on every other
+	// metric before a call ever reaches here, so implementations may ignore it
+	// for anything else.
+	TimeSeries(ctx context.Context, metric Metric, resolution Resolution, from, to time.Time, asset *AssetFilter) ([]TimeSeriesPoint, error)
 	TopN(ctx context.Context, metric TopMetric, since, until time.Time, limit int) ([]TopEntry, error)
 }
 
@@ -78,19 +83,25 @@ func (h *Handler) handleTimeSeries(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.queryTimeout)
 	defer cancel()
 
-	points, err := h.reader.TimeSeries(ctx, req.Metric, req.Resolution, req.From, req.To)
+	points, err := h.reader.TimeSeries(ctx, req.Metric, req.Resolution, req.From, req.To, req.Asset)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 
-	writeJSON(w, TimeSeriesResponse{
+	resp := TimeSeriesResponse{
 		Metric:     req.Metric,
 		Resolution: req.Resolution,
 		From:       req.From,
 		To:         req.To,
 		Data:       points,
-	})
+	}
+	// Only set when the request carried a filter, so an unfiltered request's
+	// response keeps the exact frozen shape (no empty "asset":"" field).
+	if req.Asset != nil {
+		resp.Asset = req.Asset.ID()
+	}
+	writeJSON(w, resp)
 }
 
 func (h *Handler) handleTop(w http.ResponseWriter, r *http.Request) {

@@ -151,3 +151,39 @@ func TestParseTopRequestRejectsBadInput(t *testing.T) {
 		})
 	}
 }
+
+func TestParseTimeSeriesRequestAcceptsAnAssetFilterOnAssetSupply(t *testing.T) {
+	q := timeSeriesQuery(map[string]string{"metric": "asset_supply", "asset": "native"})
+	got, err := ParseTimeSeriesRequest(q)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Asset == nil || !got.Asset.Native {
+		t.Errorf("Asset = %+v, want native", got.Asset)
+	}
+}
+
+func TestParseTimeSeriesRequestOmittedAssetIsUnfiltered(t *testing.T) {
+	q := timeSeriesQuery(map[string]string{"metric": "asset_supply"})
+	got, err := ParseTimeSeriesRequest(q)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Asset != nil {
+		t.Errorf("Asset = %+v, want nil", got.Asset)
+	}
+}
+
+func TestParseTimeSeriesRequestRejectsAssetOnOtherMetrics(t *testing.T) {
+	q := timeSeriesQuery(map[string]string{"asset": "native"}) // metric defaults to tx_count
+	if _, err := ParseTimeSeriesRequest(q); !errors.Is(err, ErrInvalidParam) {
+		t.Errorf("error = %v, want ErrInvalidParam", err)
+	}
+}
+
+func TestParseTimeSeriesRequestRejectsMalformedAsset(t *testing.T) {
+	q := timeSeriesQuery(map[string]string{"metric": "asset_supply", "asset": "not-a-real-asset-id"})
+	if _, err := ParseTimeSeriesRequest(q); !errors.Is(err, ErrInvalidParam) {
+		t.Errorf("error = %v, want ErrInvalidParam", err)
+	}
+}
