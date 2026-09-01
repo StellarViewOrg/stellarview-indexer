@@ -26,3 +26,33 @@ migrate: build
 
 clean:
 	rm -rf bin/
+
+benchmark-up:
+	./benchmark/scripts/run.sh up
+
+benchmark-prepare:
+	./benchmark/scripts/run.sh prepare
+
+benchmark-load-postgres:
+	./benchmark/scripts/run.sh load-postgres
+
+benchmark-load-clickhouse:
+	./benchmark/scripts/run.sh load-clickhouse
+
+benchmark-query:
+	./benchmark/scripts/run.sh query
+
+benchmark-storage:
+	./benchmark/scripts/run.sh storage
+
+benchmark-run:
+	./benchmark/scripts/run.sh run
+
+benchmark-report:
+	./benchmark/scripts/run.sh report
+
+benchmark-clean:
+	./benchmark/scripts/run.sh clean
+
+benchmark-test:
+	./benchmark/scripts/run.sh validate

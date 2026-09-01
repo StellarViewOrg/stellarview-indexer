@@ -1,0 +1,12 @@
+{
+  "network": "pubnet",
+  "source": "s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet",
+  "region": "us-east-2",
+  "startLedger": 100,
+  "endLedger": 104,
+  "ledgerCount": 5,
+  "objectLayout": "Resolved by github.com/stellar/go-stellar-sdk datastore.DataStore for the configured S3 prefix",
+  "objects": [],
+  "generatedAt": "2026-08-22",
+  "checksums": "Generated object checksums are written here by benchmark manifest preparation; no ledger payload is committed."
+}

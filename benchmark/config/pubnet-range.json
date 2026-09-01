@@ -1,0 +1,11 @@
+{
+  "network": "pubnet",
+  "source": "s3://aws-public-blockchain/v1.1/stellar/ledgers/pubnet",
+  "region": "us-east-2",
+  "startLedger": 100,
+  "endLedger": 104,
+  "ledgerCount": 5,
+  "manifest": "benchmark/fixtures/pubnet-range-manifest.json",
+  "format": "stellar-go datastore S3 LedgerCloseMeta files",
+  "downloadCommand": "go run ./benchmark/cmd/manifest --config benchmark/config/pubnet-range.json"
+}
