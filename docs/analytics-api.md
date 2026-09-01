@@ -5,9 +5,7 @@ continuous aggregates.
 
 **This contract is frozen.** The explorer builds its dashboards against these shapes
 (`stellarview-explorer/apps/explorer-web/src/lib/indexer/`). Field names, metric identifiers, and
-the empty-result behaviour must not change without coordinating with that repository. New optional
-fields (like the `asset` filter below) are additive and safe to ship without a breaking change,
-since existing clients never send them and the response simply omits the corresponding field.
+the empty-result behaviour must not change without coordinating with that repository.
 
 ## Running it
 
@@ -36,7 +34,6 @@ empty value to refuse cross-origin requests entirely.
 | `resolution` | yes | `hourly`, `daily`, `weekly` |
 | `from` | yes | RFC 3339 timestamp. Widened to the start of the bucket containing it |
 | `to` | yes | RFC 3339 timestamp, exclusive |
-| `asset` | no | Only valid with `metric=asset_supply`. `native`, `CODE-ISSUER` (the same identifier `asset_transfers` returns), or a Soroban token contract ID. Narrows the series to one asset's net supply delta; omitted, `asset_supply` stays the all-assets sum. Present with any other `metric`, or malformed, is `400` |
 
 ```bash
 curl 'localhost:8080/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=2026-08-20T19:00:00Z&to=2026-08-20T23:00:00Z'
@@ -54,28 +51,6 @@ curl 'localhost:8080/api/v1/analytics/timeseries?metric=tx_count&resolution=hour
   ]
 }
 ```
-
-Narrowed to a single asset:
-
-```bash
-curl 'localhost:8080/api/v1/analytics/timeseries?metric=asset_supply&resolution=daily&from=2026-08-01T00:00:00Z&to=2026-08-20T00:00:00Z&asset=USDC-GA5Z...'
-```
-
-```json
-{
-  "metric": "asset_supply",
-  "asset": "USDC-GA5Z...",
-  "resolution": "daily",
-  "from": "2026-08-01T00:00:00Z",
-  "to": "2026-08-20T00:00:00Z",
-  "data": [
-    { "timestamp": "2026-08-01T00:00:00Z", "value": 12500 }
-  ]
-}
-```
-
-`asset` is present in the response only when the request carried one; an unfiltered request's
-response is byte-for-byte the same shape it always was.
 
 ## `GET /api/v1/analytics/top`
 
@@ -116,7 +91,7 @@ curl 'localhost:8080/api/v1/analytics/top?metric=contract_activity&window=24h&li
 | `fee_soroban` | `transactions` where `is_soroban` | `SUM(fee_charged)` — **total** fee, not the resource fee | stroops |
 | `active_accounts` | `transactions` | `COUNT(DISTINCT account)` | accounts |
 | `new_accounts` | `operations` where `type_name = 'create_account'` | `COUNT(*)` | accounts |
-| `asset_supply` | `token_events` (`mint`, `burn`, `clawback`) | net minted minus burned; optionally filtered to one asset via `asset` | asset units |
+| `asset_supply` | `token_events` (`mint`, `burn`, `clawback`) | net minted minus burned | asset units |
 
 | Top-N metric | Source | `id` | `value` |
 | ------------ | ------ | ---- | ------- |
@@ -149,26 +124,10 @@ Notes on the definitions:
   nothing bounds that share under a wave of failing submissions. Fixing it properly means
   denormalising the status onto `operations` during transform, or not persisting operations from
   failed transactions at all.
-- **`asset_supply` sums signed deltas across every asset by default**, an activity indicator rather
-  than a monetary figure since assets have different units. Pass `asset=native`, `asset=CODE-ISSUER`,
-  or a Soroban contract ID to narrow it to one asset's net supply delta instead — the underlying
-  aggregate has always been stored per asset (see the Aggregation setup section), so this is a
-  read-time filter and does not change what gets materialized.
-
-### The `asset` identifier
-
-The same three shapes `asset_transfers` already returns as `TopEntry.id`, so a value taken from that
-ranking can be dropped straight into this filter:
-
-| Shape | Meaning |
-| ----- | ------- |
-| `native` | the native XLM asset |
-| `CODE-ISSUER` | a classic credit asset, e.g. `USDC-GA5Z...` |
-| a bare contract ID (`C...`) | a pure Soroban token never wrapped in a classic code/issuer pair |
-
-Validation is shape-only — code length and charset, address length/prefix/alphabet — not a checksum
-or an existence check. A well-formed but never-seen asset is not an error: like every other metric,
-it returns `200` with `data: []`. Only a value that doesn't match any of the three shapes is `400`.
+- **`asset_supply` sums signed deltas across every asset** when queried through this endpoint.
+  Because assets have different units, that total is an activity indicator rather than a monetary
+  figure. The underlying aggregate is stored per asset, so a per-asset series can be exposed later
+  without changing the stored data.
 
 ## Semantics
 
@@ -229,7 +188,7 @@ each computed from the raw table.
 | `analytics_tx_hourly` | bucket | `tx_count`, `fee_classic`, `fee_soroban` |
 | `analytics_volume_hourly` | bucket | `tx_volume` |
 | `analytics_new_accounts_hourly` | bucket | `new_accounts` |
-| `analytics_asset_supply_hourly` | bucket, asset | `asset_supply` (unfiltered and, via `asset`, per-asset) |
+| `analytics_asset_supply_hourly` | bucket, asset | `asset_supply` |
 | `analytics_contract_activity_hourly` | bucket, contract | `contract_activity` |
 | `analytics_asset_transfers_hourly` | bucket, asset | `asset_transfers` |
 | `analytics_active_accounts_{hourly,daily,weekly}` | bucket | `active_accounts` |

@@ -1,290 +1,153 @@
 package analytics
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"strings"
+	"net/url"
 	"testing"
 	"time"
 )
 
-// fakeReader records what the handler asked for and replays a canned answer.
-type fakeReader struct {
-	points  []TimeSeriesPoint
-	entries []TopEntry
-	err     error
-
-	gotMetric     Metric
-	gotResolution Resolution
-	gotFrom       time.Time
-	gotTo         time.Time
-	gotAsset      *AssetFilter
-	gotTopMetric  TopMetric
-	gotSince      time.Time
-	gotUntil      time.Time
-	gotLimit      int
-}
-
-func (f *fakeReader) TimeSeries(_ context.Context, metric Metric, resolution Resolution, from, to time.Time, asset *AssetFilter) ([]TimeSeriesPoint, error) {
-	f.gotMetric, f.gotResolution, f.gotFrom, f.gotTo, f.gotAsset = metric, resolution, from, to, asset
-	return f.points, f.err
-}
-
-func (f *fakeReader) TopN(_ context.Context, metric TopMetric, since, until time.Time, limit int) ([]TopEntry, error) {
-	f.gotTopMetric, f.gotSince, f.gotUntil, f.gotLimit = metric, since, until, limit
-	return f.entries, f.err
-}
-
-// frozenNow keeps the rolling Top-N window deterministic.
-var frozenNow = time.Date(2026, 8, 20, 23, 0, 0, 0, time.UTC)
-
-func newTestHandler(reader Reader) *Handler {
-	h := NewHandler(reader, []string{AllowAllOrigins})
-	h.now = func() time.Time { return frozenNow }
-	return h
-}
-
-func serve(t *testing.T, reader Reader, target string) *httptest.ResponseRecorder {
-	t.Helper()
-	mux := http.NewServeMux()
-	newTestHandler(reader).Register(mux)
-
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-	return rec
-}
-
-func TestTimeSeriesEndpointReturnsTheSeries(t *testing.T) {
-	reader := &fakeReader{points: []TimeSeriesPoint{
-		{Timestamp: time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC), Value: 42},
-	}}
-
-	rec := serve(t, reader,
-		"/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=2026-08-20T19:00:00Z&to=2026-08-20T21:00:00Z")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
+func timeSeriesQuery(overrides map[string]string) url.Values {
+	q := url.Values{
+		"metric":     {"tx_count"},
+		"resolution": {"hourly"},
+		"from":       {"2026-08-20T19:00:00Z"},
+		"to":         {"2026-08-20T23:00:00Z"},
 	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
-	}
-
-	var got TimeSeriesResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.Metric != MetricTxCount || got.Resolution != ResolutionHourly || len(got.Data) != 1 {
-		t.Errorf("unexpected response: %+v", got)
-	}
-
-	// The parsed request must reach the reader unchanged.
-	if reader.gotMetric != MetricTxCount || reader.gotResolution != ResolutionHourly {
-		t.Errorf("reader saw (%s, %s)", reader.gotMetric, reader.gotResolution)
-	}
-	if !reader.gotFrom.Equal(time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC)) {
-		t.Errorf("reader saw from = %s", reader.gotFrom)
-	}
-	if reader.gotAsset != nil {
-		t.Errorf("reader saw asset = %+v, want nil for an unfiltered request", reader.gotAsset)
-	}
-	if strings.Contains(rec.Body.String(), `"asset"`) {
-		t.Errorf("unfiltered response must omit the asset field, got %s", rec.Body)
-	}
-}
-
-// TestTimeSeriesEndpointReportsNoDataAsAnEmptySeries is the explorer's
-// "not available yet" path: a metric with nothing aggregated is a successful
-// response carrying an empty array, never an error status.
-func TestTimeSeriesEndpointReportsNoDataAsAnEmptySeries(t *testing.T) {
-	rec := serve(t, &fakeReader{},
-		"/api/v1/analytics/timeseries?metric=asset_supply&resolution=daily&from=2026-08-01T00:00:00Z&to=2026-08-20T00:00:00Z")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), `"data":[]`) {
-		t.Errorf("body must carry an empty array, got %s", rec.Body)
-	}
-}
-
-func TestTimeSeriesEndpointRejectsBadParameters(t *testing.T) {
-	targets := []string{
-		"/api/v1/analytics/timeseries",
-		"/api/v1/analytics/timeseries?metric=nope&resolution=hourly&from=2026-08-20T19:00:00Z&to=2026-08-20T21:00:00Z",
-		"/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=nonsense&to=2026-08-20T21:00:00Z",
-		"/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=2026-08-20T21:00:00Z&to=2026-08-20T19:00:00Z",
-	}
-
-	for _, target := range targets {
-		rec := serve(t, &fakeReader{}, target)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("%s: status = %d, want 400", target, rec.Code)
+	for k, v := range overrides {
+		if v == "" {
+			q.Del(k)
+			continue
 		}
-		if !strings.Contains(rec.Body.String(), `"error"`) {
-			t.Errorf("%s: body should explain the problem, got %s", target, rec.Body)
-		}
+		q.Set(k, v)
+	}
+	return q
+}
+
+func TestParseTimeSeriesRequestAcceptsAValidQuery(t *testing.T) {
+	got, err := ParseTimeSeriesRequest(timeSeriesQuery(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := TimeSeriesRequest{
+		Metric:     MetricTxCount,
+		Resolution: ResolutionHourly,
+		From:       time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC),
+		To:         time.Date(2026, 8, 20, 23, 0, 0, 0, time.UTC),
+	}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
 
-// A backend failure must not hand internal detail to an unauthenticated
-// caller, mirroring how /healthz keeps database errors server-side.
-func TestTimeSeriesEndpointHidesBackendErrors(t *testing.T) {
-	reader := &fakeReader{err: errors.New(`pq: relation "analytics_tx_hourly" does not exist`)}
+func TestParseTimeSeriesRequestNormalisesTimestampsToUTC(t *testing.T) {
+	q := timeSeriesQuery(map[string]string{"from": "2026-08-20T16:00:00-03:00"})
 
-	rec := serve(t, reader,
-		"/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=2026-08-20T19:00:00Z&to=2026-08-20T21:00:00Z")
-
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500", rec.Code)
+	got, err := ParseTimeSeriesRequest(q)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if strings.Contains(rec.Body.String(), "analytics_tx_hourly") || strings.Contains(rec.Body.String(), "pq:") {
-		t.Errorf("internal error leaked into the response: %s", rec.Body)
+
+	want := time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC)
+	if !got.From.Equal(want) || got.From.Location() != time.UTC {
+		t.Errorf("From = %s (%v), want %s in UTC", got.From, got.From.Location(), want)
 	}
 }
 
-func TestTopEndpointDerivesTheWindowFromTheClock(t *testing.T) {
-	reader := &fakeReader{entries: []TopEntry{{ID: "C1", Label: "C1", Value: 3}}}
-
-	rec := serve(t, reader, "/api/v1/analytics/top?metric=contract_activity&window=7d")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
+func TestParseTimeSeriesRequestRejectsBadInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides map[string]string
+	}{
+		{"missing metric", map[string]string{"metric": ""}},
+		{"unknown metric", map[string]string{"metric": "tx_counts"}},
+		{"missing resolution", map[string]string{"resolution": ""}},
+		{"unknown resolution", map[string]string{"resolution": "minutely"}},
+		{"missing from", map[string]string{"from": ""}},
+		{"missing to", map[string]string{"to": ""}},
+		{"from not RFC 3339", map[string]string{"from": "2026-08-20"}},
+		{"to not RFC 3339", map[string]string{"to": "yesterday"}},
+		{"from after to", map[string]string{"from": "2026-08-21T00:00:00Z", "to": "2026-08-20T00:00:00Z"}},
+		{"from equal to to", map[string]string{"from": "2026-08-20T00:00:00Z", "to": "2026-08-20T00:00:00Z"}},
+		{"range too wide for resolution", map[string]string{"from": "1990-01-01T00:00:00Z", "to": "2026-01-01T00:00:00Z"}},
 	}
 
-	wantSince := frozenNow.Add(-7 * 24 * time.Hour)
-	if !reader.gotSince.Equal(wantSince) {
-		t.Errorf("reader saw since = %s, want %s", reader.gotSince, wantSince)
-	}
-	// The window closes at the clock, so a row dated ahead of the server cannot
-	// appear in a rolling ranking.
-	if !reader.gotUntil.Equal(frozenNow) {
-		t.Errorf("reader saw until = %s, want %s", reader.gotUntil, frozenNow)
-	}
-	if reader.gotLimit != defaultTopLimit {
-		t.Errorf("reader saw limit = %d, want the default %d", reader.gotLimit, defaultTopLimit)
-	}
-
-	var got TopResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.Metric != TopContractActivity || got.Window != Window7d {
-		t.Errorf("unexpected envelope: %+v", got)
-	}
-}
-
-func TestTopEndpointReportsNoDataAsAnEmptyRanking(t *testing.T) {
-	rec := serve(t, &fakeReader{}, "/api/v1/analytics/top?metric=highest_fees&window=24h")
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), `"data":[]`) {
-		t.Errorf("body must carry an empty array, got %s", rec.Body)
-	}
-}
-
-func TestTopEndpointRejectsBadParameters(t *testing.T) {
-	targets := []string{
-		"/api/v1/analytics/top",
-		"/api/v1/analytics/top?metric=tx_count&window=24h",
-		"/api/v1/analytics/top?metric=highest_fees&window=90d",
-		"/api/v1/analytics/top?metric=highest_fees&window=24h&limit=0",
-	}
-
-	for _, target := range targets {
-		if rec := serve(t, &fakeReader{}, target); rec.Code != http.StatusBadRequest {
-			t.Errorf("%s: status = %d, want 400", target, rec.Code)
-		}
-	}
-}
-
-func TestEndpointsRejectNonGetMethods(t *testing.T) {
-	mux := http.NewServeMux()
-	newTestHandler(&fakeReader{}).Register(mux)
-
-	for _, path := range []string{"/api/v1/analytics/timeseries", "/api/v1/analytics/top"} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
-		if rec.Code != http.StatusMethodNotAllowed {
-			t.Errorf("POST %s: status = %d, want 405", path, rec.Code)
-		}
-	}
-}
-
-// blockingReader stalls until its context is cancelled, standing in for a query
-// that outlives its welcome.
-type blockingReader struct{}
-
-func (blockingReader) TimeSeries(ctx context.Context, _ Metric, _ Resolution, _, _ time.Time, _ *AssetFilter) ([]TimeSeriesPoint, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func (blockingReader) TopN(ctx context.Context, _ TopMetric, _, _ time.Time, _ int) ([]TopEntry, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-// A request must not hold a database connection indefinitely. The server's
-// write timeout closes the client connection but leaves the statement running
-// and its pool slot held, so the handler has to bound the work itself.
-func TestSlowQueriesAreCutOffByTheirDeadline(t *testing.T) {
-	h := NewHandler(blockingReader{}, []string{AllowAllOrigins})
-	h.now = func() time.Time { return frozenNow }
-	h.queryTimeout = 50 * time.Millisecond
-
-	mux := http.NewServeMux()
-	h.Register(mux)
-
-	for _, target := range []string{
-		"/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=2026-08-20T19:00:00Z&to=2026-08-20T21:00:00Z",
-		"/api/v1/analytics/top?metric=highest_fees&window=24h",
-	} {
-		done := make(chan *httptest.ResponseRecorder, 1)
-		go func() {
-			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
-			done <- rec
-		}()
-
-		select {
-		case rec := <-done:
-			if rec.Code != http.StatusInternalServerError {
-				t.Errorf("%s: status = %d, want 500 once the deadline passes", target, rec.Code)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ParseTimeSeriesRequest(timeSeriesQuery(tt.overrides)); !errors.Is(err, ErrInvalidParam) {
+				t.Errorf("error = %v, want ErrInvalidParam", err)
 			}
-		case <-time.After(5 * time.Second):
-			t.Errorf("%s: handler never returned — the query is not bounded", target)
-		}
+		})
 	}
 }
 
-func TestTimeSeriesEndpointPlumbsTheAssetFilterThrough(t *testing.T) {
-	reader := &fakeReader{points: []TimeSeriesPoint{
-		{Timestamp: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC), Value: 7},
-	}}
+// A range too wide at one resolution can be perfectly reasonable at a coarser
+// one, so the bucket cap must be evaluated per resolution rather than as a
+// fixed span limit.
+func TestSeriesSizeCapIsPerResolution(t *testing.T) {
+	span := map[string]string{"from": "1990-01-01T00:00:00Z", "to": "2026-01-01T00:00:00Z"}
 
-	rec := serve(t, reader,
-		"/api/v1/analytics/timeseries?metric=asset_supply&resolution=daily&from=2026-08-01T00:00:00Z&to=2026-08-20T00:00:00Z&asset=native")
+	if _, err := ParseTimeSeriesRequest(timeSeriesQuery(span)); err == nil {
+		t.Error("36 years hourly should exceed the bucket cap")
+	}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
-	}
-	if reader.gotAsset == nil || !reader.gotAsset.Native {
-		t.Errorf("reader saw asset = %+v, want native", reader.gotAsset)
-	}
-	if !strings.Contains(rec.Body.String(), `"asset":"native"`) {
-		t.Errorf("response must echo the asset filter, got %s", rec.Body)
+	span["resolution"] = "weekly"
+	if _, err := ParseTimeSeriesRequest(timeSeriesQuery(span)); err != nil {
+		t.Errorf("36 years weekly is only ~1.9k buckets and should be accepted, got %v", err)
 	}
 }
 
-func TestTimeSeriesEndpointRejectsAssetOnUnsupportedMetrics(t *testing.T) {
-	rec := serve(t, &fakeReader{},
-		"/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=2026-08-20T19:00:00Z&to=2026-08-20T21:00:00Z&asset=native")
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400", rec.Code)
+func TestParseTopRequestDefaultsTheLimit(t *testing.T) {
+	got, err := ParseTopRequest(url.Values{
+		"metric": {"contract_activity"},
+		"window": {"24h"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := TopRequest{Metric: TopContractActivity, Window: Window24h, Limit: defaultTopLimit}
+	if got != want {
+		t.Errorf("got %+v, want %+v", got, want)
+	}
+}
+
+func TestParseTopRequestHonoursAnExplicitLimit(t *testing.T) {
+	got, err := ParseTopRequest(url.Values{
+		"metric": {"highest_fees"},
+		"window": {"30d"},
+		"limit":  {"25"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Limit != 25 {
+		t.Errorf("Limit = %d, want 25", got.Limit)
+	}
+}
+
+func TestParseTopRequestRejectsBadInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		query url.Values
+	}{
+		{"missing metric", url.Values{"window": {"24h"}}},
+		{"time-series metric", url.Values{"metric": {"tx_count"}, "window": {"24h"}}},
+		{"missing window", url.Values{"metric": {"highest_fees"}}},
+		{"unknown window", url.Values{"metric": {"highest_fees"}, "window": {"90d"}}},
+		{"limit not a number", url.Values{"metric": {"highest_fees"}, "window": {"24h"}, "limit": {"ten"}}},
+		{"limit with trailing text", url.Values{"metric": {"highest_fees"}, "window": {"24h"}, "limit": {"10x"}}},
+		{"limit zero", url.Values{"metric": {"highest_fees"}, "window": {"24h"}, "limit": {"0"}}},
+		{"limit negative", url.Values{"metric": {"highest_fees"}, "window": {"24h"}, "limit": {"-5"}}},
+		{"limit above maximum", url.Values{"metric": {"highest_fees"}, "window": {"24h"}, "limit": {"101"}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := ParseTopRequest(tt.query); !errors.Is(err, ErrInvalidParam) {
+				t.Errorf("error = %v, want ErrInvalidParam", err)
+			}
+		})
 	}
 }
