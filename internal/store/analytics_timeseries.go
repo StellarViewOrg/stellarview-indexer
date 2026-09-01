@@ -11,6 +11,13 @@ import (
 // stroopsPerXLM scales the native asset's base units into whole XLM.
 const stroopsPerXLM = 1e7
 
+// Asset type discriminators shared with token_events.asset_type, matching the
+// CASE in topAssetTransfers: 0 native, 1 classic (code+issuer), 2 pure Soroban.
+const (
+	nativeAssetType  = 0
+	classicAssetType = 1
+)
+
 // timeSeriesSource describes how one metric is read: the relation holding its
 // hourly buckets, and the expression that turns those rows into a bucket value.
 //
@@ -24,7 +31,9 @@ type timeSeriesSource struct {
 	value    string
 }
 
-// hourlySources maps the metrics whose relation does not depend on resolution.
+// hourlySources maps the metrics whose relation does not depend on resolution
+// or on any per-request filter. asset_supply is built dynamically instead, by
+// assetSupplySource, because an asset filter changes its WHERE clause.
 var hourlySources = map[analytics.Metric]timeSeriesSource{
 	analytics.MetricTxCount: {
 		relation: "analytics_tx_hourly",
@@ -47,17 +56,9 @@ var hourlySources = map[analytics.Metric]timeSeriesSource{
 		relation: "analytics_volume_hourly",
 		value:    fmt.Sprintf("SUM(stroops_transferred) / %.0f", stroopsPerXLM),
 	},
-	// Supply is stored per asset in base units, so each row is scaled by that
-	// asset's decimals before the assets are summed together.
-	analytics.MetricAssetSupply: {
-		relation: `(
-			SELECT s.bucket,
-			       s.net_supply_delta / (10::numeric ^ ` + decimalsExpr("s") + `) AS units
-			FROM analytics_asset_supply_hourly s
-			LEFT JOIN contracts c ON c.contract_id = s.asset_contract_id
-		) AS asset_supply`,
-		value: "SUM(units)",
-	},
+	// MetricAssetSupply is intentionally not listed here — its relation
+	// depends on the request's asset filter, so it is built dynamically by
+	// assetSupplySource and handled as a special case in TimeSeries.
 }
 
 // classicAssetDecimals is the precision the protocol fixes for native and
@@ -88,6 +89,45 @@ func decimalsExpr(assetAlias string) string {
 // Soroban token, the only kind whose precision is contract-defined.
 const sorobanAssetType = 2
 
+// assetSupplySource builds the relation/value pair for asset_supply, optionally
+// narrowed to a single asset by filter. Filtering happens inside the subquery,
+// on the raw asset_type/asset_code/asset_issuer/asset_contract_id columns,
+// before assets are scaled and summed — filtering the summed output could not
+// tell one asset's contribution apart from another's.
+//
+// Bound parameter placeholders for the filter start at paramOffset, so the
+// caller can place them after its own positional arguments ($1 interval, $2
+// from, $3 to).
+func assetSupplySource(filter *analytics.AssetFilter, paramOffset int) (timeSeriesSource, []any) {
+	where := ""
+	var args []any
+
+	switch {
+	case filter == nil:
+		// Unfiltered: every asset contributes to the sum.
+	case filter.Native:
+		where = fmt.Sprintf("WHERE s.asset_type = %d", nativeAssetType)
+	case filter.ContractID != "":
+		where = fmt.Sprintf("WHERE s.asset_type = %d AND s.asset_contract_id = $%d",
+			sorobanAssetType, paramOffset)
+		args = []any{filter.ContractID}
+	default:
+		where = fmt.Sprintf("WHERE s.asset_type = %d AND s.asset_code = $%d AND s.asset_issuer = $%d",
+			classicAssetType, paramOffset, paramOffset+1)
+		args = []any{filter.Code, filter.Issuer}
+	}
+
+	relation := fmt.Sprintf(`(
+		SELECT s.bucket,
+		       s.net_supply_delta / (10::numeric ^ %s) AS units
+		FROM analytics_asset_supply_hourly s
+		LEFT JOIN contracts c ON c.contract_id = s.asset_contract_id
+		%s
+	) AS asset_supply`, decimalsExpr("s"), where)
+
+	return timeSeriesSource{relation: relation, value: "SUM(units)"}, args
+}
+
 // activeAccountViews maps each resolution to its dedicated distinct-count
 // aggregate.
 var activeAccountViews = map[analytics.Resolution]string{
@@ -97,7 +137,8 @@ var activeAccountViews = map[analytics.Resolution]string{
 }
 
 // sourceFor resolves the relation and value expression for a metric at a
-// resolution.
+// resolution. It does not handle asset_supply — that has its own filter-aware
+// path in assetSupplySource, called directly from TimeSeries.
 func sourceFor(metric analytics.Metric, resolution analytics.Resolution) (timeSeriesSource, error) {
 	if metric == analytics.MetricActiveAccounts {
 		view, ok := activeAccountViews[resolution]
@@ -122,15 +163,34 @@ func sourceFor(metric analytics.Metric, resolution analytics.Resolution) (timeSe
 //
 // Buckets with no activity are absent rather than zero, and a range with no
 // data at all yields an empty series rather than an error.
+//
+// asset narrows the series to a single asset and is only meaningful for
+// MetricAssetSupply. ParseTimeSeriesRequest rejects an asset filter on every
+// other metric before it reaches here, so a non-nil asset alongside a
+// different metric is simply ignored, since sourceFor never looks at it.
 func (s *PostgresStore) TimeSeries(
 	ctx context.Context,
 	metric analytics.Metric,
 	resolution analytics.Resolution,
 	from, to time.Time,
+	asset *analytics.AssetFilter,
 ) ([]analytics.TimeSeriesPoint, error) {
-	source, err := sourceFor(metric, resolution)
-	if err != nil {
-		return nil, err
+	// $1 interval, $2 from, $3 to are always present; any filter arguments are
+	// appended after them, starting here.
+	const paramOffset = 4
+
+	var (
+		source timeSeriesSource
+		extra  []any
+		err    error
+	)
+	if metric == analytics.MetricAssetSupply {
+		source, extra = assetSupplySource(asset, paramOffset)
+	} else {
+		source, err = sourceFor(metric, resolution)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Both bounds are evaluated against whole buckets rather than the caller's
@@ -157,7 +217,9 @@ func (s *PostgresStore) TimeSeries(
 		GROUP BY ts
 		ORDER BY ts`, source.value, source.relation)
 
-	rows, err := s.db.QueryContext(ctx, query, resolution.BucketInterval(), from, to)
+	args := append([]any{resolution.BucketInterval(), from, to}, extra...)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query %s time series: %w", metric, err)
 	}

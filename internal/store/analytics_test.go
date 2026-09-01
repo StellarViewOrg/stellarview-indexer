@@ -50,7 +50,7 @@ func TestTimeSeriesMatchesManualRecomputation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(string(tt.metric), func(t *testing.T) {
-			points, err := store.TimeSeries(context.Background(), tt.metric, analytics.ResolutionHourly, from, to)
+			points, err := store.TimeSeries(context.Background(), tt.metric, analytics.ResolutionHourly, from, to, nil)
 			if err != nil {
 				t.Fatalf("TimeSeries: %v", err)
 			}
@@ -82,7 +82,7 @@ func TestDailyRollupSumsTheHourlyBuckets(t *testing.T) {
 	from, to, cleanup := insertAnalyticsFixture(t, store)
 	defer cleanup()
 
-	daily, err := store.TimeSeries(context.Background(), analytics.MetricTxCount, analytics.ResolutionDaily, from, to)
+	daily, err := store.TimeSeries(context.Background(), analytics.MetricTxCount, analytics.ResolutionDaily, from, to, nil)
 	if err != nil {
 		t.Fatalf("TimeSeries daily: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestActiveAccountsDailyIsNotASumOfHours(t *testing.T) {
 	from, to, cleanup := insertAnalyticsFixture(t, store)
 	defer cleanup()
 
-	daily, err := store.TimeSeries(context.Background(), analytics.MetricActiveAccounts, analytics.ResolutionDaily, from, to)
+	daily, err := store.TimeSeries(context.Background(), analytics.MetricActiveAccounts, analytics.ResolutionDaily, from, to, nil)
 	if err != nil {
 		t.Fatalf("TimeSeries daily: %v", err)
 	}
@@ -133,7 +133,7 @@ func TestWeeklyResolutionIsServedForEveryMetric(t *testing.T) {
 
 	for _, metric := range analytics.AllMetrics {
 		for _, resolution := range analytics.AllResolutions {
-			if _, err := store.TimeSeries(context.Background(), metric, resolution, from, to); err != nil {
+			if _, err := store.TimeSeries(context.Background(), metric, resolution, from, to, nil); err != nil {
 				t.Errorf("TimeSeries(%s, %s): %v", metric, resolution, err)
 			}
 		}
@@ -150,7 +150,7 @@ func TestTimeSeriesReturnsEmptySeriesForAQuietRange(t *testing.T) {
 	quietTo := quietFrom.Add(24 * time.Hour)
 
 	for _, metric := range analytics.AllMetrics {
-		points, err := store.TimeSeries(context.Background(), metric, analytics.ResolutionHourly, quietFrom, quietTo)
+		points, err := store.TimeSeries(context.Background(), metric, analytics.ResolutionHourly, quietFrom, quietTo, nil)
 		if err != nil {
 			t.Errorf("TimeSeries(%s): %v", metric, err)
 			continue
@@ -228,11 +228,11 @@ func TestLeadingBucketIsCompleteAndConsistentAcrossMetrics(t *testing.T) {
 	// the day began.
 	midDay := fixtureBase.Add(90 * time.Minute)
 
-	txSeries, err := store.TimeSeries(context.Background(), analytics.MetricTxCount, analytics.ResolutionDaily, midDay, to)
+	txSeries, err := store.TimeSeries(context.Background(), analytics.MetricTxCount, analytics.ResolutionDaily, midDay, to, nil)
 	if err != nil {
 		t.Fatalf("TimeSeries tx_count: %v", err)
 	}
-	activeSeries, err := store.TimeSeries(context.Background(), analytics.MetricActiveAccounts, analytics.ResolutionDaily, midDay, to)
+	activeSeries, err := store.TimeSeries(context.Background(), analytics.MetricActiveAccounts, analytics.ResolutionDaily, midDay, to, nil)
 	if err != nil {
 		t.Fatalf("TimeSeries active_accounts: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestWeeklyResolutionReturnsRealValues(t *testing.T) {
 	}
 
 	for _, metric := range []analytics.Metric{analytics.MetricTxCount, analytics.MetricActiveAccounts} {
-		points, err := store.TimeSeries(context.Background(), metric, analytics.ResolutionWeekly, from, to)
+		points, err := store.TimeSeries(context.Background(), metric, analytics.ResolutionWeekly, from, to, nil)
 		if err != nil {
 			t.Fatalf("TimeSeries(%s, weekly): %v", metric, err)
 		}
@@ -300,7 +300,7 @@ func TestWeeklyResolutionReturnsRealValues(t *testing.T) {
 
 	// The first week holds five fixture transactions from three accounts, which
 	// is the distinct count a summed rollup would get wrong.
-	weekly, err := store.TimeSeries(context.Background(), analytics.MetricActiveAccounts, analytics.ResolutionWeekly, from, to)
+	weekly, err := store.TimeSeries(context.Background(), analytics.MetricActiveAccounts, analytics.ResolutionWeekly, from, to, nil)
 	if err != nil {
 		t.Fatalf("TimeSeries: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestBackfillAndIncrementalRefreshAgree(t *testing.T) {
 	// Guard the premise: nothing may be materialized yet, or the incremental
 	// pass below would be skipped and this test would prove nothing.
 	for _, metric := range analytics.AllMetrics {
-		points, err := store.TimeSeries(ctx, metric, analytics.ResolutionHourly, from, to)
+		points, err := store.TimeSeries(ctx, metric, analytics.ResolutionHourly, from, to, nil)
 		if err != nil {
 			t.Fatalf("TimeSeries(%s) before any refresh: %v", metric, err)
 		}
@@ -357,7 +357,7 @@ func TestBackfillAndIncrementalRefreshAgree(t *testing.T) {
 
 	incremental := make(map[analytics.Metric][]analytics.TimeSeriesPoint)
 	for _, metric := range analytics.AllMetrics {
-		points, err := store.TimeSeries(ctx, metric, analytics.ResolutionHourly, from, to)
+		points, err := store.TimeSeries(ctx, metric, analytics.ResolutionHourly, from, to, nil)
 		if err != nil {
 			t.Fatalf("TimeSeries(%s) after incremental refresh: %v", metric, err)
 		}
@@ -379,7 +379,7 @@ func TestBackfillAndIncrementalRefreshAgree(t *testing.T) {
 	}
 
 	for _, metric := range analytics.AllMetrics {
-		backfilled, err := store.TimeSeries(ctx, metric, analytics.ResolutionHourly, from, to)
+		backfilled, err := store.TimeSeries(ctx, metric, analytics.ResolutionHourly, from, to, nil)
 		if err != nil {
 			t.Fatalf("TimeSeries(%s) after backfill: %v", metric, err)
 		}

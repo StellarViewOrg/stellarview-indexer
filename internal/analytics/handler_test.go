@@ -21,14 +21,15 @@ type fakeReader struct {
 	gotResolution Resolution
 	gotFrom       time.Time
 	gotTo         time.Time
+	gotAsset      *AssetFilter
 	gotTopMetric  TopMetric
 	gotSince      time.Time
 	gotUntil      time.Time
 	gotLimit      int
 }
 
-func (f *fakeReader) TimeSeries(_ context.Context, metric Metric, resolution Resolution, from, to time.Time) ([]TimeSeriesPoint, error) {
-	f.gotMetric, f.gotResolution, f.gotFrom, f.gotTo = metric, resolution, from, to
+func (f *fakeReader) TimeSeries(_ context.Context, metric Metric, resolution Resolution, from, to time.Time, asset *AssetFilter) ([]TimeSeriesPoint, error) {
+	f.gotMetric, f.gotResolution, f.gotFrom, f.gotTo, f.gotAsset = metric, resolution, from, to, asset
 	return f.points, f.err
 }
 
@@ -85,6 +86,12 @@ func TestTimeSeriesEndpointReturnsTheSeries(t *testing.T) {
 	}
 	if !reader.gotFrom.Equal(time.Date(2026, 8, 20, 19, 0, 0, 0, time.UTC)) {
 		t.Errorf("reader saw from = %s", reader.gotFrom)
+	}
+	if reader.gotAsset != nil {
+		t.Errorf("reader saw asset = %+v, want nil for an unfiltered request", reader.gotAsset)
+	}
+	if strings.Contains(rec.Body.String(), `"asset"`) {
+		t.Errorf("unfiltered response must omit the asset field, got %s", rec.Body)
 	}
 }
 
@@ -212,7 +219,7 @@ func TestEndpointsRejectNonGetMethods(t *testing.T) {
 // that outlives its welcome.
 type blockingReader struct{}
 
-func (blockingReader) TimeSeries(ctx context.Context, _ Metric, _ Resolution, _, _ time.Time) ([]TimeSeriesPoint, error) {
+func (blockingReader) TimeSeries(ctx context.Context, _ Metric, _ Resolution, _, _ time.Time, _ *AssetFilter) ([]TimeSeriesPoint, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -252,5 +259,32 @@ func TestSlowQueriesAreCutOffByTheirDeadline(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Errorf("%s: handler never returned — the query is not bounded", target)
 		}
+	}
+}
+
+func TestTimeSeriesEndpointPlumbsTheAssetFilterThrough(t *testing.T) {
+	reader := &fakeReader{points: []TimeSeriesPoint{
+		{Timestamp: time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC), Value: 7},
+	}}
+
+	rec := serve(t, reader,
+		"/api/v1/analytics/timeseries?metric=asset_supply&resolution=daily&from=2026-08-01T00:00:00Z&to=2026-08-20T00:00:00Z&asset=native")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body: %s)", rec.Code, rec.Body)
+	}
+	if reader.gotAsset == nil || !reader.gotAsset.Native {
+		t.Errorf("reader saw asset = %+v, want native", reader.gotAsset)
+	}
+	if !strings.Contains(rec.Body.String(), `"asset":"native"`) {
+		t.Errorf("response must echo the asset filter, got %s", rec.Body)
+	}
+}
+
+func TestTimeSeriesEndpointRejectsAssetOnUnsupportedMetrics(t *testing.T) {
+	rec := serve(t, &fakeReader{},
+		"/api/v1/analytics/timeseries?metric=tx_count&resolution=hourly&from=2026-08-20T19:00:00Z&to=2026-08-20T21:00:00Z&asset=native")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rec.Code)
 	}
 }

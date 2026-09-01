@@ -24,25 +24,12 @@ var ErrInvalidParam = errors.New("invalid parameter")
 type Metric string
 
 const (
-	// MetricTxCount counts transactions per bucket.
-	MetricTxCount Metric = "tx_count"
-	// MetricTxVolume totals native (XLM) transferred per bucket.
-	MetricTxVolume Metric = "tx_volume"
-	// MetricFeeClassic totals fees charged on non-Soroban transactions, in stroops.
-	MetricFeeClassic Metric = "fee_classic"
-	// MetricFeeSoroban totals the fee charged on Soroban transactions, in
-	// stroops. This is the whole fee, not the Soroban resource fee: the
-	// indexer does not record the resource component, so it cannot be
-	// separated from the inclusion fee. Charting this as a resource fee
-	// overstates it by the inclusion fee on every transaction.
-	MetricFeeSoroban Metric = "fee_soroban"
-	// MetricActiveAccounts counts distinct transaction source accounts per bucket.
+	MetricTxCount        Metric = "tx_count"
+	MetricTxVolume       Metric = "tx_volume"
+	MetricFeeClassic     Metric = "fee_classic"
+	MetricFeeSoroban     Metric = "fee_soroban"
 	MetricActiveAccounts Metric = "active_accounts"
-	// MetricNewAccounts counts create_account operations per bucket, including
-	// those in transactions that failed — the operations are recorded either
-	// way and an aggregate cannot join them to the transaction's status. Do
-	// not present it as accounts successfully created.
-	MetricNewAccounts Metric = "new_accounts"
+	MetricNewAccounts    Metric = "new_accounts"
 	// MetricAssetSupply totals net supply change (mints minus burns and
 	// clawbacks). Unfiltered, it sums every asset. Pass an AssetFilter to
 	// narrow it to one asset's net supply delta instead.
@@ -65,13 +52,9 @@ var AllMetrics = []Metric{
 type TopMetric string
 
 const (
-	// TopContractActivity ranks contracts by events emitted, which is the
-	// only per-contract activity signal the indexer records.
 	TopContractActivity TopMetric = "contract_activity"
-	// TopAssetTransfers ranks assets by transferred volume.
-	TopAssetTransfers TopMetric = "asset_transfers"
-	// TopHighestFees ranks individual transactions by fee charged.
-	TopHighestFees TopMetric = "highest_fees"
+	TopAssetTransfers   TopMetric = "asset_transfers"
+	TopHighestFees      TopMetric = "highest_fees"
 )
 
 // AllTopMetrics lists every supported Top-N metric.
@@ -93,11 +76,6 @@ const (
 // AllResolutions lists every supported resolution, coarsening left to right.
 var AllResolutions = []Resolution{ResolutionHourly, ResolutionDaily, ResolutionWeekly}
 
-// bucketIntervals maps each resolution to the PostgreSQL interval literal passed
-// to time_bucket. Boundaries follow time_bucket's own origin — 2000-01-03 for
-// buckets of a day or more, which puts weekly boundaries on a Monday — so a
-// series derived from hourly rows lines up with one computed directly from the
-// raw table.
 var bucketIntervals = map[Resolution]string{
 	ResolutionHourly: "1 hour",
 	ResolutionDaily:  "1 day",
@@ -134,21 +112,16 @@ func (w Window) Duration() time.Duration {
 
 // TimeSeriesPoint is one bucket of a time series.
 type TimeSeriesPoint struct {
-	// Timestamp marks the start of the bucket, in UTC.
 	Timestamp time.Time `json:"timestamp"`
-	// Value is the aggregated value for the bucket.
-	Value float64 `json:"value"`
+	Value     float64   `json:"value"`
 }
 
-// TimeSeriesResponse is the envelope returned by the time-series endpoint. Data
-// is never null: a metric with nothing aggregated yet returns an empty slice,
-// which the explorer renders as a "not available yet" state.
+// TimeSeriesResponse is the envelope returned by the time-series endpoint.
 type TimeSeriesResponse struct {
 	Metric Metric `json:"metric"`
-	// Asset is set only when the request carried an asset filter (currently
-	// only meaningful for asset_supply). Omitted entirely otherwise, so the
-	// frozen unfiltered shape stays byte-for-byte unchanged for existing
-	// clients — this field is additive, not a breaking change to the contract.
+	// Asset is set only when the request carried an asset filter. Omitted
+	// entirely otherwise, so the frozen unfiltered shape stays byte-for-byte
+	// unchanged for existing clients.
 	Asset      string            `json:"asset,omitempty"`
 	Resolution Resolution        `json:"resolution"`
 	From       time.Time         `json:"from"`
@@ -158,19 +131,13 @@ type TimeSeriesResponse struct {
 
 // TopEntry is one row of a Top-N ranking.
 type TopEntry struct {
-	// ID identifies the entity: a contract ID, a "CODE-ISSUER" asset key, or a
-	// transaction hash.
-	ID string `json:"id"`
-	// Label is the human-readable form of ID.
-	Label string `json:"label"`
-	// Value is the ranking value: events emitted, transferred volume, or fee.
-	Value float64 `json:"value"`
-	// Metadata carries per-metric context and is omitted when empty.
+	ID       string         `json:"id"`
+	Label    string         `json:"label"`
+	Value    float64        `json:"value"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// TopResponse is the envelope returned by the Top-N endpoint. As with
-// TimeSeriesResponse, Data is never null.
+// TopResponse is the envelope returned by the Top-N endpoint.
 type TopResponse struct {
 	Metric TopMetric  `json:"metric"`
 	Window Window     `json:"window"`
@@ -181,20 +148,13 @@ type TopResponse struct {
 // for MetricAssetSupply — ParseTimeSeriesRequest rejects it on every other
 // metric. A nil *AssetFilter means unfiltered (the frozen all-assets sum).
 type AssetFilter struct {
-	// Native is set for the native XLM asset.
-	Native bool
-	// Code and Issuer identify a classic (code-issuer) asset. Both are set
-	// together or not at all.
+	Native       bool
 	Code, Issuer string
-	// ContractID identifies a pure Soroban token by its contract, for assets
-	// never wrapped in a classic code/issuer pair.
-	ContractID string
+	ContractID   string
 }
 
 // ID renders the filter back into the identifier form: "native", "CODE-ISSUER",
-// or a bare contract ID. This is the same shape TopEntry.ID uses for
-// asset_transfers, so a client can round-trip an identifier from one endpoint
-// into a filter on the other.
+// or a bare contract ID — the same shape TopEntry.ID uses for asset_transfers.
 func (f AssetFilter) ID() string {
 	switch {
 	case f.Native:
@@ -206,22 +166,13 @@ func (f AssetFilter) ID() string {
 	}
 }
 
-// strkeyLen is the fixed length of a StrKey-encoded Stellar account or
-// contract address.
 const strkeyLen = 56
-
-// maxAssetCodeLen is the longest a Stellar asset code may be.
 const maxAssetCodeLen = 12
 
-// ParseAssetFilter validates a raw "asset" query parameter. An empty string is
-// not an error — it means unfiltered, and returns a nil filter.
-//
-// Validation is shape-only: code charset and length, and address
-// length/prefix/alphabet for issuers and contract IDs. It is not a checksum or
-// existence check — decoding the StrKey checksum here would cost a decode for
-// no benefit, since a checksum failure and a well-formed-but-nonexistent asset
-// both simply produce an empty series, which is not an error for any other
-// metric either.
+// ParseAssetFilter validates a raw "asset" query parameter. An empty string
+// means unfiltered and returns a nil filter. Validation is shape-only, not a
+// checksum or existence check — a well-formed but never-seen asset simply
+// yields an empty series, same as any other metric with no data.
 func ParseAssetFilter(raw string) (*AssetFilter, error) {
 	if raw == "" {
 		return nil, nil
@@ -238,9 +189,6 @@ func ParseAssetFilter(raw string) (*AssetFilter, error) {
 	return nil, fmt.Errorf(`%w: asset %q, want "native", "CODE-ISSUER", or a contract ID`, ErrInvalidParam, raw)
 }
 
-// isAssetCode reports whether s is shaped like a Stellar asset code: 1 to 12
-// alphanumeric characters. The protocol does not restrict case, so both are
-// accepted here.
 func isAssetCode(s string) bool {
 	if len(s) == 0 || len(s) > maxAssetCodeLen {
 		return false
@@ -253,8 +201,6 @@ func isAssetCode(s string) bool {
 	return true
 }
 
-// isStrkeyShaped reports whether s has the length and alphabet of a StrKey
-// address starting with prefix ('G' for an account, 'C' for a contract).
 func isStrkeyShaped(s string, prefix byte) bool {
 	if len(s) != strkeyLen || s[0] != prefix {
 		return false

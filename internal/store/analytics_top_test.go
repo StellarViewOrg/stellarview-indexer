@@ -108,7 +108,7 @@ func TestTopNSurvivesHostileTokenDecimals(t *testing.T) {
 			if _, err := store.TopN(context.Background(), analytics.TopAssetTransfers, fixtureSince, fixtureUntil, 10); err != nil {
 				t.Errorf("TopN must not fail on an absurd token precision: %v", err)
 			}
-			if _, err := store.TimeSeries(context.Background(), analytics.MetricAssetSupply, analytics.ResolutionHourly, fixtureSince, from); err != nil {
+			if _, err := store.TimeSeries(context.Background(), analytics.MetricAssetSupply, analytics.ResolutionHourly, fixtureSince, from, nil); err != nil {
 				t.Errorf("TimeSeries must not fail on an absurd token precision: %v", err)
 			}
 		})
