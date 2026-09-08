@@ -110,8 +110,9 @@ func runLive(cfg *config.Config) {
 			ExposeMetrics: true,
 		})
 		srv.SetDomainReader(db)
+		srv.SetVerificationStore(db)
 		go func() {
-			log.Printf("http server listening on %s (/metrics, /healthz, /v1/domains)", cfg.ListenAddr())
+			log.Printf("http server listening on %s (/metrics, /healthz, /v1/domains, /v1/verify)", cfg.ListenAddr())
 			if err := srv.Start(); err != nil {
 				log.Printf("http server error: %v", err)
 			}
@@ -166,6 +167,7 @@ func runServe(cfg *config.Config) {
 		Analytics:      db,
 		AllowedOrigins: cfg.APICORSOrigins,
 	})
+	srv.SetVerificationStore(db)
 
 	drained := make(chan struct{})
 	go func() {

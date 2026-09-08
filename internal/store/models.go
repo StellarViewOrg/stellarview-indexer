@@ -208,3 +208,47 @@ type DomainEvent struct {
 	CreatedAt       time.Time
 	Details         string // JSON
 }
+
+// Verification status values for ContractVerification.Status.
+const (
+	VerificationStatusPending  = "pending"
+	VerificationStatusVerified = "verified"
+	VerificationStatusMismatch = "mismatch"
+	VerificationStatusFailed   = "failed"
+)
+
+// ContractVerification represents a row in the contract_verifications table:
+// one submission of source + build metadata for a contract's wasm_hash. It
+// is keyed by wasm_hash rather than contract_id so that multiple deployments
+// sharing identical bytecode share one verification record.
+type ContractVerification struct {
+	ID                int64      `db:"id"`
+	WasmHash          string     `db:"wasm_hash"`
+	ContractID        string     `db:"contract_id"`
+	Network           string     `db:"network"`
+	RepositoryURL     *string    `db:"repository_url"`
+	GitRef            *string    `db:"git_ref"`
+	GitCommit         *string    `db:"git_commit"`
+	RustVersion       *string    `db:"rust_version"`
+	SorobanSDKVersion *string    `db:"soroban_sdk_version"`
+	BuildProfile      *string    `db:"build_profile"` // JSON
+	Status            string     `db:"status"`
+	ComputedWasmHash  *string    `db:"computed_wasm_hash"`
+	FailureReason     *string    `db:"failure_reason"`
+	BuildLog          *string    `db:"build_log"`
+	SubmittedAt       time.Time  `db:"submitted_at"`
+	CompletedAt       *time.Time `db:"completed_at"`
+	UpdatedAt         time.Time  `db:"updated_at"`
+}
+
+// VerificationSourceFile represents a row in the contract_verification_sources
+// table: one file of a verified source tree, keyed by verification_id +
+// file_path so each submission's snapshot is independently retrievable.
+type VerificationSourceFile struct {
+	VerificationID int64     `db:"verification_id"`
+	WasmHash       string    `db:"wasm_hash"`
+	FilePath       string    `db:"file_path"`
+	Content        string    `db:"content"`
+	SizeBytes      int32     `db:"size_bytes"`
+	CreatedAt      time.Time `db:"created_at"`
+}

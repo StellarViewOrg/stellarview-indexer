@@ -54,10 +54,12 @@ type dbPinger interface {
 // simulate a stuck pipeline without depending on real elapsed time.
 type staleChecker func(maxAge time.Duration) bool
 
-// Server serves /metrics, /healthz, and the domains read API.
+// Server serves /metrics, /healthz, the domains read API, and the contract
+// verification API.
 type Server struct {
-	srv     *http.Server
-	domains DomainReader
+	srv          *http.Server
+	domains      DomainReader
+	verification VerificationStore
 }
 
 // Options configures what a Server exposes. /healthz and the domains read API
@@ -94,6 +96,12 @@ func New(addr string, opts Options) *Server {
 	mux.HandleFunc("GET /v1/domains/{name}/events", s.handleDomainEvents)
 	mux.HandleFunc("GET /v1/domains/{name}", s.handleDomainByName)
 	mux.HandleFunc("GET /v1/domains", s.handleDomains)
+
+	mux.HandleFunc("POST /v1/verify", rateLimitMiddleware(newIPRateLimiter(verifyRateLimitPerMinute, verifyRateLimitWindow), s.handleVerifySubmit))
+	mux.HandleFunc("GET /v1/verify/contract/{contractId}", s.handleVerifyByContract)
+	mux.HandleFunc("GET /v1/verify/wasm/{wasmHash}/source/{path...}", s.handleVerifySourceFile)
+	mux.HandleFunc("GET /v1/verify/wasm/{wasmHash}/source", s.handleVerifySourceTree)
+	mux.HandleFunc("GET /v1/verify/wasm/{wasmHash}", s.handleVerifyByWasmHash)
 
 	s.srv = &http.Server{
 		Addr:              addr,

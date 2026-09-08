@@ -59,6 +59,7 @@ When `METRICS_ADDR` or `HTTP_ADDR` is set, `live` starts an HTTP server alongsid
 - `GET /metrics` -- Prometheus exposition format. Exposes `indexer_ledgers_ingested_total`, `indexer_transactions_ingested_total`, `indexer_operations_ingested_total`, `indexer_rpc_errors_total`, `indexer_db_errors_total`, and the `indexer_ingestion_lag_ledgers` gauge (network tip minus last ingested ledger).
 - `GET /healthz` -- liveness/readiness probe. Returns `200` when the database is reachable and the ingestion loop has completed a poll cycle within the last 2 minutes, `503` otherwise (with a generic `reason`, never the raw database error). Suitable for Docker/k8s health checks.
 - `GET /v1/domains` -- Soroban Domains read API (resolve by name, reverse lookup, list, event history). Response shape is frozen in [docs/domains-api.md](docs/domains-api.md). `indexed: false` means ingestion has not started yet — not an error.
+- `POST /v1/verify`, `GET /v1/verify/...` -- contract source verification: submit source for a deployed contract and read back its status/source tree. Frozen in [docs/verification-api.md](docs/verification-api.md). The build pipeline that actually verifies source is not yet implemented, so every submission is currently `pending`.
 
 On pubnet the indexer watches registry contract `CC75Z72OCE667WVPQOROIWDAGBOXFNJ4VQONQEURL74EYIDLWA4F7FEN` unless `DOMAINS_REGISTRY_CONTRACT_ID` is set. Testnet and futurenet have no default; set the env var to enable domain ingestion.
 
