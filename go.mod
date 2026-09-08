@@ -12,7 +12,7 @@ require (
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/stellar/go-stellar-sdk v0.6.0
 	golang.org/x/crypto v0.52.0
-	google.golang.org/protobuf v1.36.7
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
