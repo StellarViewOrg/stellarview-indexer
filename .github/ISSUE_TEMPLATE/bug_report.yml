@@ -1,0 +1,64 @@
+name: Bug report
+description: Report incorrect or missing data, a crash, or unexpected indexer behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. The more detail you provide, the faster this can be triaged.
+
+  - type: input
+    id: version
+    attributes:
+      label: Indexer version / commit
+      description: Output of `indexer --version`, the Docker image tag, or the commit SHA you're running
+      placeholder: v0.1.0 or a1b2c3d
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Stellar network
+      options:
+        - Public
+        - Testnet
+        - Futurenet
+        - Other / local
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Worker count, batch size, and any non-default env vars (redact secrets)
+      render: shell
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What did you run, and against which ledger range or entity (account, contract, tx hash)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: shell
