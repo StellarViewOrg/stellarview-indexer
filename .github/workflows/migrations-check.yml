@@ -1,0 +1,37 @@
+name: Migrations Integrity
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  check-duplicate-migrations:
+    name: Verify Migration Versions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Test Migrations Package
+        run: go test -v ./migrations/...
+
+      - name: Check for duplicate migration prefixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Verifying migration version uniqueness in migrations/..."
+          duplicates=$(find migrations -name "*.sql" -exec basename {} \; | cut -d'_' -f1 | sort | uniq -c | awk '$1 > 2 {print $2}')
+          if [ -n "$duplicates" ]; then
+            echo "❌ Duplicate migration version prefix detected:"
+            echo "$duplicates"
+            exit 1
+          fi
+          echo "✅ All migration version prefixes are unique."
