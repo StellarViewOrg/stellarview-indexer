@@ -16,7 +16,7 @@ services:
       timeout: 5s
       retries: 20
   clickhouse:
-    image: clickhouse/clickhouse-server:25.12
+    image: clickhouse/clickhouse-server:26.9
     ports:
       - "58123:8123"
       - "59000:9000"
